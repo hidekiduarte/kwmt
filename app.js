@@ -1,5 +1,5 @@
 const KEY='kwmt_say_v1';
-const TEAM=[{name:'Hideki Duarte',hour:70,half:35},{name:'João Cequeira',hour:70,half:35},{name:'Allan Dornellas',hour:90,half:45},{name:'Fábio',hour:70,half:35},{name:'Xoli',hour:70,half:35}];
+const TEAM=[{name:'Hideki Duarte',hour:70,half:35},{name:'João Cequeira',hour:70,half:35},{name:'Allan Dornellas',hour:80,half:40},{name:'Fábio',hour:70,half:35},{name:'Xoli',hour:70,half:35}];
 const defaults={packages:[],schoolLessons:[],privateLessons:[],expenses:[]};let db=load();
 function load(){try{return {...structuredClone(defaults),...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch{return structuredClone(defaults)}}
 function save(){localStorage.setItem(KEY,JSON.stringify(db));render()}
