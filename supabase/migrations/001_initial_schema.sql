@@ -16,6 +16,13 @@ create table if not exists public.schools (
   brand_name text,
   logo_url text,
   contact_phone text,
+  operation_type text not null default 'surf_school'
+    check (operation_type in ('surf_school','independent_instructor')),
+  public_profile_enabled boolean not null default false,
+  description text,
+  city text,
+  state text,
+  service_area text,
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -185,7 +192,7 @@ as $$
   );
 $$;
 
-create or replace function public.create_school(school_name text)
+create or replace function public.create_school(school_name text, operation_kind text default 'surf_school')
 returns uuid
 language plpgsql security definer
 set search_path = public
@@ -196,15 +203,18 @@ begin
     raise exception 'Authentication required';
   end if;
   if nullif(trim(school_name), '') is null then
-    raise exception 'School name is required';
+    raise exception 'School or professional name is required';
+  end if;
+  if operation_kind not in ('surf_school','independent_instructor') then
+    raise exception 'Invalid operation type';
   end if;
 
   insert into public.profiles(id)
   values (auth.uid())
   on conflict (id) do nothing;
 
-  insert into public.schools(name, created_by)
-  values (trim(school_name), auth.uid())
+  insert into public.schools(name, operation_type, created_by)
+  values (trim(school_name), operation_kind, auth.uid())
   returning id into new_school_id;
 
   insert into public.school_members(school_id, user_id, role)
@@ -248,7 +258,7 @@ $$;
 revoke all on function public.is_school_member(uuid) from public, anon;
 revoke all on function public.is_school_owner(uuid) from public, anon;
 revoke all on function public.is_assigned_teacher(uuid) from public, anon;
-revoke all on function public.create_school(text) from public, anon;
+revoke all on function public.create_school(text, text) from public, anon;
 revoke all on function public.confirm_lesson_attendance(uuid) from public, anon;
 
 grant execute on function public.is_school_member(uuid) to authenticated;
@@ -360,5 +370,5 @@ grant select, insert, update, delete on public.school_expenses to authenticated;
 grant select, insert, update, delete on public.lesson_payouts to authenticated;
 grant select, insert on public.audit_logs to authenticated;
 
-grant execute on function public.create_school(text) to authenticated;
+grant execute on function public.create_school(text, text) to authenticated;
 grant execute on function public.confirm_lesson_attendance(uuid) to authenticated;
