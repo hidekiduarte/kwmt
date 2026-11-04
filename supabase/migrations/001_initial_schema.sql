@@ -28,6 +28,65 @@ create table if not exists public.schools (
   created_at timestamptz not null default now()
 );
 
+-- One school or instructor may register multiple teaching locations.
+create table if not exists public.school_locations (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid not null references public.schools(id) on delete cascade,
+  location_name text not null,
+  address_line text,
+  address_number text,
+  neighborhood text,
+  city text not null,
+  state text not null,
+  postal_code text,
+  reference_point text,
+  latitude numeric(9,6),
+  longitude numeric(9,6),
+  is_primary boolean not null default false,
+  public_visible boolean not null default false,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (school_id, id),
+  check ((latitude is null and longitude is null)
+      or (latitude between -90 and 90 and longitude between -180 and 180))
+);
+
+create unique index if not exists idx_school_locations_one_primary
+  on public.school_locations(school_id)
+  where is_primary = true and active = true;
+
+create index if not exists idx_school_locations_school
+  on public.school_locations(school_id, active);
+
+-- Public directory view: only explicitly published schools and locations
+-- are visible, and only non-sensitive fields are exposed.
+create or replace view public.public_school_locations
+with (security_barrier = true)
+as
+select
+  s.id as school_id,
+  coalesce(nullif(s.brand_name, ''), s.name) as display_name,
+  s.operation_type,
+  s.logo_url,
+  s.description,
+  l.id as location_id,
+  l.location_name,
+  l.address_line,
+  l.address_number,
+  l.neighborhood,
+  l.city,
+  l.state,
+  l.postal_code,
+  l.reference_point,
+  l.latitude,
+  l.longitude,
+  l.is_primary
+from public.schools s
+join public.school_locations l on l.school_id = s.id
+where s.public_profile_enabled = true
+  and l.public_visible = true
+  and l.active = true;
+
 create table if not exists public.school_members (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
@@ -326,6 +385,7 @@ grant execute on function public.is_assigned_teacher(uuid) to authenticated;
 alter table public.profiles enable row level security;
 alter table public.schools enable row level security;
 alter table public.school_members enable row level security;
+alter table public.school_locations enable row level security;
 alter table public.teachers enable row level security;
 alter table public.students enable row level security;
 alter table public.student_private_details enable row level security;
@@ -349,6 +409,12 @@ for select to authenticated using (public.is_school_owner(id));
 drop policy if exists "schools owner update" on public.schools;
 create policy "schools owner update" on public.schools
 for update to authenticated using (public.is_school_owner(id)) with check (public.is_school_owner(id));
+
+drop policy if exists "owner manages school locations" on public.school_locations;
+create policy "owner manages school locations" on public.school_locations
+for all to authenticated
+using (public.is_school_owner(school_id))
+with check (public.is_school_owner(school_id));
 
 drop policy if exists "members self or owner read" on public.school_members;
 create policy "members self or owner read" on public.school_members
@@ -420,12 +486,15 @@ drop policy if exists "audit insert member" on public.audit_logs;
 create policy "audit insert member" on public.audit_logs
 for insert to authenticated with check (public.is_school_member(school_id) and actor_id = auth.uid());
 
-revoke all on public.schools, public.school_members, public.teachers, public.students,
+revoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
   public.student_private_details, public.lessons, public.equipment, public.rentals, public.school_expenses,
   public.lesson_payouts, public.audit_logs from anon;
 
 grant select, update on public.profiles to authenticated;
 grant select, update on public.schools to authenticated;
+grant select, insert, update, delete on public.school_locations to authenticated;
+revoke all on public.public_school_locations from public;
+grant select on public.public_school_locations to anon, authenticated;
 grant select, insert, update, delete on public.school_members to authenticated;
 grant select, insert, update, delete on public.teachers to authenticated;
 grant select, insert, update, delete on public.students to authenticated;
