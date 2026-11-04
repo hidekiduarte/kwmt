@@ -3,6 +3,7 @@
 -- No API keys or passwords belong in this file.
 
 create extension if not exists pgcrypto;
+create extension if not exists btree_gist;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -54,10 +55,20 @@ create table if not exists public.students (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
   name text not null,
+  created_at timestamptz not null default now(),
+  unique (school_id, id)
+);
+
+-- Sensitive student contact details are stored separately so teachers
+-- cannot read them through the ordinary students table.
+create table if not exists public.student_private_details (
+  student_id uuid primary key,
+  school_id uuid not null references public.schools(id) on delete cascade,
   phone text,
   notes text,
   created_at timestamptz not null default now(),
-  unique (school_id, id)
+  foreign key (school_id, student_id)
+    references public.students(school_id, id) on delete cascade
 );
 
 create table if not exists public.lessons (
@@ -148,6 +159,39 @@ create index if not exists idx_lessons_school_start on public.lessons(school_id,
 create index if not exists idx_lessons_teacher_start on public.lessons(teacher_id, starts_at);
 create index if not exists idx_rentals_school_start on public.rentals(school_id, starts_at);
 
+-- Prevent overlapping bookings. Adjacent bookings are allowed (end = next start).
+do $
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'lessons_teacher_no_overlap'
+      and conrelid = 'public.lessons'::regclass
+  ) then
+    alter table public.lessons
+      add constraint lessons_teacher_no_overlap
+      exclude using gist (
+        teacher_id with =,
+        tstzrange(starts_at, ends_at, '[)') with &&
+      )
+      where (status = 'scheduled');
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'rentals_equipment_no_overlap'
+      and conrelid = 'public.rentals'::regclass
+  ) then
+    alter table public.rentals
+      add constraint rentals_equipment_no_overlap
+      exclude using gist (
+        equipment_id with =,
+        tstzrange(starts_at, due_at, '[)') with &&
+      )
+      where (status in ('reserved', 'checked_out'));
+  end if;
+end;
+$;
+
 create or replace function public.is_school_member(target_school uuid)
 returns boolean
 language sql stable security definer
@@ -228,12 +272,18 @@ create or replace function public.confirm_lesson_attendance(target_lesson uuid)
 returns void
 language plpgsql security definer
 set search_path = public
-as $$
-declare lesson_school uuid;
-declare lesson_teacher uuid;
+as $
+declare
+  lesson_school uuid;
+  lesson_teacher uuid;
+  lesson_end timestamptz;
+  lesson_status text;
 begin
-  select school_id, teacher_id into lesson_school, lesson_teacher
-  from public.lessons where id = target_lesson;
+  select school_id, teacher_id, ends_at, status
+    into lesson_school, lesson_teacher, lesson_end, lesson_status
+  from public.lessons
+  where id = target_lesson
+  for update;
 
   if lesson_school is null then
     raise exception 'Lesson not found';
@@ -242,6 +292,14 @@ begin
   if not public.is_school_owner(lesson_school)
      and not public.is_assigned_teacher(lesson_teacher) then
     raise exception 'Not authorized';
+  end if;
+
+  if lesson_status <> 'scheduled' then
+    raise exception 'Only scheduled lessons can be confirmed';
+  end if;
+
+  if lesson_end > now() then
+    raise exception 'A lesson can only be confirmed after its scheduled end';
   end if;
 
   update public.lessons
@@ -253,7 +311,7 @@ begin
   insert into public.audit_logs(school_id, actor_id, action, entity_table, entity_id)
   values (lesson_school, auth.uid(), 'attendance_confirmed', 'lessons', target_lesson::text);
 end;
-$$;
+$;
 
 revoke all on function public.is_school_member(uuid) from public, anon;
 revoke all on function public.is_school_owner(uuid) from public, anon;
@@ -270,6 +328,7 @@ alter table public.schools enable row level security;
 alter table public.school_members enable row level security;
 alter table public.teachers enable row level security;
 alter table public.students enable row level security;
+alter table public.student_private_details enable row level security;
 alter table public.lessons enable row level security;
 alter table public.equipment enable row level security;
 alter table public.rentals enable row level security;
@@ -311,13 +370,20 @@ for select to authenticated using (
   public.is_school_owner(school_id)
   or exists (
     select 1 from public.lessons l
-    join public.teachers t on t.id = l.teacher_id
-    where l.student_id = students.id and t.user_id = auth.uid()
+    where l.school_id = students.school_id
+      and l.student_id = students.id
+      and public.is_assigned_teacher(l.teacher_id)
   )
 );
 drop policy if exists "owner manages students" on public.students;
 create policy "owner manages students" on public.students
 for all to authenticated using (public.is_school_owner(school_id)) with check (public.is_school_owner(school_id));
+
+drop policy if exists "student private details owner only" on public.student_private_details;
+create policy "student private details owner only" on public.student_private_details
+for all to authenticated
+using (public.is_school_owner(school_id))
+with check (public.is_school_owner(school_id));
 
 drop policy if exists "lessons owner or assigned teacher read" on public.lessons;
 create policy "lessons owner or assigned teacher read" on public.lessons
@@ -355,7 +421,7 @@ create policy "audit insert member" on public.audit_logs
 for insert to authenticated with check (public.is_school_member(school_id) and actor_id = auth.uid());
 
 revoke all on public.schools, public.school_members, public.teachers, public.students,
-  public.lessons, public.equipment, public.rentals, public.school_expenses,
+  public.student_private_details, public.lessons, public.equipment, public.rentals, public.school_expenses,
   public.lesson_payouts, public.audit_logs from anon;
 
 grant select, update on public.profiles to authenticated;
@@ -363,6 +429,7 @@ grant select, update on public.schools to authenticated;
 grant select, insert, update, delete on public.school_members to authenticated;
 grant select, insert, update, delete on public.teachers to authenticated;
 grant select, insert, update, delete on public.students to authenticated;
+grant select, insert, update, delete on public.student_private_details to authenticated;
 grant select, insert, update, delete on public.lessons to authenticated;
 grant select, insert, update, delete on public.equipment to authenticated;
 grant select, insert, update, delete on public.rentals to authenticated;
