@@ -39,7 +39,8 @@ create table if not exists public.teachers (
   half_hour_rate numeric(10,2) not null default 0 check (half_hour_rate >= 0),
   active boolean not null default true,
   created_at timestamptz not null default now(),
-  unique (school_id, user_id)
+  unique (school_id, user_id),
+  unique (school_id, id)
 );
 
 create table if not exists public.students (
@@ -48,14 +49,15 @@ create table if not exists public.students (
   name text not null,
   phone text,
   notes text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (school_id, id)
 );
 
 create table if not exists public.lessons (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
-  student_id uuid not null references public.students(id),
-  teacher_id uuid not null references public.teachers(id),
+  student_id uuid not null,
+  teacher_id uuid not null,
   starts_at timestamptz not null,
   ends_at timestamptz not null,
   status text not null default 'scheduled'
@@ -63,7 +65,10 @@ create table if not exists public.lessons (
   attendance_confirmed_at timestamptz,
   attendance_confirmed_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
-  check (ends_at > starts_at)
+  check (ends_at > starts_at),
+  unique (school_id, id),
+  foreign key (school_id, student_id) references public.students(school_id, id),
+  foreign key (school_id, teacher_id) references public.teachers(school_id, id)
 );
 
 create table if not exists public.equipment (
@@ -74,13 +79,14 @@ create table if not exists public.equipment (
   hourly_price numeric(10,2) not null default 0 check (hourly_price >= 0),
   daily_price numeric(10,2) not null default 0 check (daily_price >= 0),
   active boolean not null default true,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (school_id, id)
 );
 
 create table if not exists public.rentals (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
-  equipment_id uuid not null references public.equipment(id),
+  equipment_id uuid not null,
   customer_name text not null,
   customer_phone text,
   starts_at timestamptz not null,
@@ -91,7 +97,8 @@ create table if not exists public.rentals (
   total_amount numeric(10,2) not null default 0 check (total_amount >= 0),
   paid boolean not null default false,
   created_at timestamptz not null default now(),
-  check (due_at > starts_at)
+  check (due_at > starts_at),
+  foreign key (school_id, equipment_id) references public.equipment(school_id, id)
 );
 
 create table if not exists public.school_expenses (
@@ -106,11 +113,14 @@ create table if not exists public.school_expenses (
 create table if not exists public.lesson_payouts (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
-  lesson_id uuid not null unique references public.lessons(id) on delete cascade,
-  teacher_id uuid not null references public.teachers(id),
+  lesson_id uuid not null,
+  teacher_id uuid not null,
   amount numeric(10,2) not null check (amount >= 0),
   paid_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (school_id, lesson_id),
+  foreign key (school_id, lesson_id) references public.lessons(school_id, id) on delete cascade,
+  foreign key (school_id, teacher_id) references public.teachers(school_id, id)
 );
 
 create table if not exists public.audit_logs (
@@ -234,6 +244,16 @@ begin
   values (lesson_school, auth.uid(), 'attendance_confirmed', 'lessons', target_lesson::text);
 end;
 $$;
+
+revoke all on function public.is_school_member(uuid) from public, anon;
+revoke all on function public.is_school_owner(uuid) from public, anon;
+revoke all on function public.is_assigned_teacher(uuid) from public, anon;
+revoke all on function public.create_school(text) from public, anon;
+revoke all on function public.confirm_lesson_attendance(uuid) from public, anon;
+
+grant execute on function public.is_school_member(uuid) to authenticated;
+grant execute on function public.is_school_owner(uuid) to authenticated;
+grant execute on function public.is_assigned_teacher(uuid) to authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.schools enable row level security;
