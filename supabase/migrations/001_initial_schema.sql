@@ -200,6 +200,76 @@ create table if not exists public.lesson_payouts (
   foreign key (school_id, teacher_id) references public.teachers(school_id, id)
 );
 
+-- A payout can only be created for a completed, attendance-confirmed lesson,
+-- and the teacher must be the teacher assigned to that lesson.
+create or replace function public.validate_lesson_payout()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  lesson_status text;
+  lesson_confirmed_at timestamptz;
+  lesson_teacher uuid;
+begin
+  select status, attendance_confirmed_at, teacher_id
+    into lesson_status, lesson_confirmed_at, lesson_teacher
+  from public.lessons
+  where school_id = new.school_id and id = new.lesson_id;
+
+  if lesson_status is distinct from 'completed'
+     or lesson_confirmed_at is null then
+    raise exception 'Payout requires a completed and confirmed lesson';
+  end if;
+
+  if lesson_teacher is distinct from new.teacher_id then
+    raise exception 'Payout teacher must match the lesson teacher';
+  end if;
+
+  return new;
+end;
+$;
+
+drop trigger if exists trg_validate_lesson_payout on public.lesson_payouts;
+create trigger trg_validate_lesson_payout
+before insert or update on public.lesson_payouts
+for each row execute function public.validate_lesson_payout();
+
+-- Keep audit records server-generated and prevent clients from forging them.
+create or replace function public.write_kwmt_audit_log()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  row_school uuid;
+  row_id text;
+  event_name text;
+begin
+  if tg_op = 'DELETE' then
+    row_school := old.school_id;
+    row_id := old.id::text;
+    event_name := 'deleted';
+  elsif tg_op = 'UPDATE' then
+    row_school := new.school_id;
+    row_id := new.id::text;
+    event_name := 'updated';
+  else
+    row_school := new.school_id;
+    row_id := new.id::text;
+    event_name := 'created';
+  end if;
+
+  insert into public.audit_logs(school_id, actor_id, action, entity_table, entity_id)
+  values (row_school, auth.uid(), event_name, tg_table_name, row_id);
+
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$;
+
 create table if not exists public.audit_logs (
   id bigint generated always as identity primary key,
   school_id uuid not null references public.schools(id) on delete cascade,
@@ -372,11 +442,38 @@ begin
 end;
 $;
 
+-- Automatically record owner-managed business data changes.
+drop trigger if exists trg_audit_students on public.students;
+create trigger trg_audit_students after insert or update or delete on public.students
+for each row execute function public.write_kwmt_audit_log();
+
+drop trigger if exists trg_audit_lessons on public.lessons;
+create trigger trg_audit_lessons after insert or update or delete on public.lessons
+for each row execute function public.write_kwmt_audit_log();
+
+drop trigger if exists trg_audit_rentals on public.rentals;
+create trigger trg_audit_rentals after insert or update or delete on public.rentals
+for each row execute function public.write_kwmt_audit_log();
+
+drop trigger if exists trg_audit_expenses on public.school_expenses;
+create trigger trg_audit_expenses after insert or update or delete on public.school_expenses
+for each row execute function public.write_kwmt_audit_log();
+
+drop trigger if exists trg_audit_payouts on public.lesson_payouts;
+create trigger trg_audit_payouts after insert or update or delete on public.lesson_payouts
+for each row execute function public.write_kwmt_audit_log();
+
+drop trigger if exists trg_audit_locations on public.school_locations;
+create trigger trg_audit_locations after insert or update or delete on public.school_locations
+for each row execute function public.write_kwmt_audit_log();
+
 revoke all on function public.is_school_member(uuid) from public, anon;
 revoke all on function public.is_school_owner(uuid) from public, anon;
 revoke all on function public.is_assigned_teacher(uuid) from public, anon;
 revoke all on function public.create_school(text, text) from public, anon;
 revoke all on function public.confirm_lesson_attendance(uuid) from public, anon;
+revoke all on function public.validate_lesson_payout() from public, anon;
+revoke all on function public.write_kwmt_audit_log() from public, anon;
 
 grant execute on function public.is_school_member(uuid) to authenticated;
 grant execute on function public.is_school_owner(uuid) to authenticated;
@@ -483,8 +580,8 @@ drop policy if exists "audit owner only" on public.audit_logs;
 create policy "audit owner only" on public.audit_logs
 for select to authenticated using (public.is_school_owner(school_id));
 drop policy if exists "audit insert member" on public.audit_logs;
-create policy "audit insert member" on public.audit_logs
-for insert to authenticated with check (public.is_school_member(school_id) and actor_id = auth.uid());
+drop policy if exists "audit insert server only" on public.audit_logs;
+-- Audit rows are inserted only by trusted database triggers/functions.
 
 revoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
   public.student_private_details, public.lessons, public.equipment, public.rentals, public.school_expenses,
@@ -504,7 +601,8 @@ grant select, insert, update, delete on public.equipment to authenticated;
 grant select, insert, update, delete on public.rentals to authenticated;
 grant select, insert, update, delete on public.school_expenses to authenticated;
 grant select, insert, update, delete on public.lesson_payouts to authenticated;
-grant select, insert on public.audit_logs to authenticated;
+grant select on public.audit_logs to authenticated;
+revoke insert, update, delete on public.audit_logs from authenticated;
 
 grant execute on function public.create_school(text, text) to authenticated;
 grant execute on function public.confirm_lesson_attendance(uuid) to authenticated;
