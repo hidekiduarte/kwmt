@@ -17,7 +17,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 begin
   insert into public.profiles (id, full_name)
   values (
@@ -29,7 +29,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
@@ -232,7 +232,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   lesson_status text;
   lesson_confirmed_at timestamptz;
@@ -254,7 +254,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists trg_validate_lesson_payout on public.lesson_payouts;
 create trigger trg_validate_lesson_payout
@@ -267,7 +267,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   row_school uuid;
   row_id text;
@@ -293,7 +293,7 @@ begin
   if tg_op = 'DELETE' then return old; end if;
   return new;
 end;
-$;
+$$;
 
 create table if not exists public.audit_logs (
   id bigint generated always as identity primary key,
@@ -314,7 +314,7 @@ create index if not exists idx_lessons_teacher_start on public.lessons(teacher_i
 create index if not exists idx_rentals_school_start on public.rentals(school_id, starts_at);
 
 -- Prevent overlapping bookings. Adjacent bookings are allowed (end = next start).
-do $
+do $$
 begin
   if not exists (
     select 1 from pg_constraint
@@ -344,7 +344,7 @@ begin
       where (status in ('reserved', 'checked_out'));
   end if;
 end;
-$;
+$$;
 
 create or replace function public.is_school_member(target_school uuid)
 returns boolean
@@ -426,7 +426,7 @@ create or replace function public.confirm_lesson_attendance(target_lesson uuid)
 returns void
 language plpgsql security definer
 set search_path = public
-as $
+as $$
 declare
   lesson_school uuid;
   lesson_teacher uuid;
@@ -465,7 +465,7 @@ begin
   insert into public.audit_logs(school_id, actor_id, action, entity_table, entity_id)
   values (lesson_school, auth.uid(), 'attendance_confirmed', 'lessons', target_lesson::text);
 end;
-$;
+$$;
 
 -- Automatically record owner-managed business data changes.
 drop trigger if exists trg_audit_students on public.students;
