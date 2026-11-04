@@ -11,6 +11,31 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- Create a profile automatically whenever a new account signs up.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  insert into public.profiles (id, full_name)
+  values (
+    new.id,
+    nullif(trim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), '')
+  )
+  on conflict (id) do update
+    set full_name = coalesce(public.profiles.full_name, excluded.full_name);
+
+  return new;
+end;
+$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function public.handle_new_user();
+
 create table if not exists public.schools (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -467,6 +492,7 @@ drop trigger if exists trg_audit_locations on public.school_locations;
 create trigger trg_audit_locations after insert or update or delete on public.school_locations
 for each row execute function public.write_kwmt_audit_log();
 
+revoke all on function public.handle_new_user() from public, anon;
 revoke all on function public.is_school_member(uuid) from public, anon;
 revoke all on function public.is_school_owner(uuid) from public, anon;
 revoke all on function public.is_assigned_teacher(uuid) from public, anon;
