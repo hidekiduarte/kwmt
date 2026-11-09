@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#14243a">
+  <meta name="description" content="Acesso à plataforma KWMT">
+  <link rel="stylesheet" href="styles.css">
+  <title>Entrar — KWMT</title>
+</head>
+<body>
+  <main class="login-page">
+    <div class="login-shell">
+      <div class="login-brand">
+        <img src="kwmt-wave.png" alt="Símbolo KWMT">
+        <div><strong>KWMT</strong><small>GESTÃO INTELIGENTE</small></div>
+      </div>
+      <section class="login-card">
+        <p class="eyebrow">ようこそ · BEM-VINDO</p>
+        <h1>Seu espaço no mar.</h1>
+        <p class="login-intro">Entre na KWMT para organizar sua escola, acompanhar suas aulas e manter tudo em harmonia.</p>
+        <p class="eyebrow">ESCOLHA SEU ACESSO</p>
+        <div class="login-roles">
+          <div class="login-role selected">
+            <span class="role-icon">⌂</span>
+            <strong>Proprietário</strong>
+            <small>Gestão da escola, equipe e financeiro.</small>
+          </div>
+          <div class="login-role">
+            <span class="role-icon">波</span>
+            <strong>Professor</strong>
+            <small>Agenda, aulas e alunos atribuídos.</small>
+          </div>
+        </div>
+        <label class="login-field">E-mail
+          <input type="email" placeholder="seuemail@exemplo.com" autocomplete="username" disabled>
+        </label>
+        <label class="login-field">Senha
+          <input type="password" placeholder="Sua senha" autocomplete="current-password" disabled>
+        </label>
+        <button class="login-submit" type="button" disabled style="opacity:.65;cursor:not-allowed">Acesso em preparação</button>
+        <p class="login-foot">Esta é uma prévia visual. O login ainda não autentica usuários nem protege dados. A próxima etapa será conectar o acesso individual ao Supabase.</p>
+      </section>
+      <a class="login-back" href="./index.html">← Voltar ao painel atual</a>
+    </div>
+  </main>
+</body>
+</html>
