@@ -625,7 +625,7 @@ grant select, update on public.profiles to authenticated;
 grant select, update on public.schools to authenticated;
 grant select, insert, update, delete on public.school_locations to authenticated;
 revoke all on public.public_school_locations from public;
-grant select on public.public_school_locations to anon, authenticated;
+grant select on public.public_school_locations to authenticated;
 grant select, insert, update, delete on public.school_members to authenticated;
 grant select, insert, update, delete on public.teachers to authenticated;
 grant select, insert, update, delete on public.students to authenticated;
