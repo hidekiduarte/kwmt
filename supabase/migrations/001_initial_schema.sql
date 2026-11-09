@@ -616,7 +616,8 @@ drop policy if exists "audit insert member" on public.audit_logs;
 drop policy if exists "audit insert server only" on public.audit_logs;
 -- Audit rows are inserted only by trusted database triggers/functions.
 
-revoke all on public.profiles from anon;\nrevoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
+revoke all on public.profiles from anon;
+revoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
   public.student_private_details, public.lessons, public.equipment, public.rentals, public.school_expenses,
   public.lesson_payouts, public.audit_logs from anon;
 
