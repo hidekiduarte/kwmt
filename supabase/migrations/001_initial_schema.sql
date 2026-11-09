@@ -72,8 +72,14 @@ create table if not exists public.school_locations (
   active boolean not null default true,
   created_at timestamptz not null default now(),
   unique (school_id, id),
-  check ((latitude is null and longitude is null)
-      or (latitude between -90 and 90 and longitude between -180 and 180))
+  check (
+    (latitude is null and longitude is null)
+    or (
+      latitude is not null and longitude is not null
+      and latitude between -90 and 90
+      and longitude between -180 and 180
+    )
+  )
 );
 
 create unique index if not exists idx_school_locations_one_primary
@@ -403,7 +409,8 @@ begin
   if nullif(trim(school_name), '') is null then
     raise exception 'School or professional name is required';
   end if;
-  if operation_kind not in ('surf_school','independent_instructor') then
+  if operation_kind is null
+     or operation_kind not in ('surf_school','independent_instructor') then
     raise exception 'Invalid operation type';
   end if;
 
