@@ -16,7 +16,7 @@ create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 begin
   insert into public.profiles (id, full_name)
@@ -237,7 +237,7 @@ create or replace function public.validate_lesson_payout()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   lesson_status text;
@@ -272,7 +272,7 @@ create or replace function public.write_kwmt_audit_log()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   row_school uuid;
@@ -355,7 +355,7 @@ $$;
 create or replace function public.is_school_member(target_school uuid)
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.school_members m
@@ -368,7 +368,7 @@ $$;
 create or replace function public.is_school_owner(target_school uuid)
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.school_members m
@@ -382,7 +382,7 @@ $$;
 create or replace function public.is_assigned_teacher(target_teacher uuid)
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.teachers t
@@ -399,7 +399,7 @@ $$;
 create or replace function public.create_school(school_name text, operation_kind text default 'surf_school')
 returns uuid
 language plpgsql security definer
-set search_path = public
+set search_path = ''
 as $$
 declare new_school_id uuid;
 begin
@@ -432,7 +432,7 @@ $$;
 create or replace function public.confirm_lesson_attendance(target_lesson uuid)
 returns void
 language plpgsql security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   lesson_school uuid;
@@ -616,7 +616,7 @@ drop policy if exists "audit insert member" on public.audit_logs;
 drop policy if exists "audit insert server only" on public.audit_logs;
 -- Audit rows are inserted only by trusted database triggers/functions.
 
-revoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
+revoke all on public.profiles from anon;\nrevoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
   public.student_private_details, public.lessons, public.equipment, public.rentals, public.school_expenses,
   public.lesson_payouts, public.audit_logs from anon;
 
