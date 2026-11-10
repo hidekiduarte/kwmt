@@ -16,7 +16,7 @@ create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 begin
   insert into public.profiles (id, full_name)
@@ -72,8 +72,14 @@ create table if not exists public.school_locations (
   active boolean not null default true,
   created_at timestamptz not null default now(),
   unique (school_id, id),
-  check ((latitude is null and longitude is null)
-      or (latitude between -90 and 90 and longitude between -180 and 180))
+  check (
+    (latitude is null and longitude is null)
+    or (
+      latitude is not null and longitude is not null
+      and latitude between -90 and 90
+      and longitude between -180 and 180
+    )
+  )
 );
 
 create unique index if not exists idx_school_locations_one_primary
@@ -231,7 +237,7 @@ create or replace function public.validate_lesson_payout()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   lesson_status text;
@@ -266,7 +272,7 @@ create or replace function public.write_kwmt_audit_log()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   row_school uuid;
@@ -349,7 +355,7 @@ $$;
 create or replace function public.is_school_member(target_school uuid)
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.school_members m
@@ -362,7 +368,7 @@ $$;
 create or replace function public.is_school_owner(target_school uuid)
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.school_members m
@@ -376,7 +382,7 @@ $$;
 create or replace function public.is_assigned_teacher(target_teacher uuid)
 returns boolean
 language sql stable security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1 from public.teachers t
@@ -393,7 +399,7 @@ $$;
 create or replace function public.create_school(school_name text, operation_kind text default 'surf_school')
 returns uuid
 language plpgsql security definer
-set search_path = public
+set search_path = ''
 as $$
 declare new_school_id uuid;
 begin
@@ -403,7 +409,8 @@ begin
   if nullif(trim(school_name), '') is null then
     raise exception 'School or professional name is required';
   end if;
-  if operation_kind not in ('surf_school','independent_instructor') then
+  if operation_kind is null
+     or operation_kind not in ('surf_school','independent_instructor') then
     raise exception 'Invalid operation type';
   end if;
 
@@ -425,7 +432,7 @@ $$;
 create or replace function public.confirm_lesson_attendance(target_lesson uuid)
 returns void
 language plpgsql security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   lesson_school uuid;
@@ -609,6 +616,7 @@ drop policy if exists "audit insert member" on public.audit_logs;
 drop policy if exists "audit insert server only" on public.audit_logs;
 -- Audit rows are inserted only by trusted database triggers/functions.
 
+revoke all on public.profiles from anon;
 revoke all on public.schools, public.school_members, public.school_locations, public.teachers, public.students,
   public.student_private_details, public.lessons, public.equipment, public.rentals, public.school_expenses,
   public.lesson_payouts, public.audit_logs from anon;
@@ -617,7 +625,7 @@ grant select, update on public.profiles to authenticated;
 grant select, update on public.schools to authenticated;
 grant select, insert, update, delete on public.school_locations to authenticated;
 revoke all on public.public_school_locations from public;
-grant select on public.public_school_locations to anon, authenticated;
+grant select on public.public_school_locations to authenticated;
 grant select, insert, update, delete on public.school_members to authenticated;
 grant select, insert, update, delete on public.teachers to authenticated;
 grant select, insert, update, delete on public.students to authenticated;
