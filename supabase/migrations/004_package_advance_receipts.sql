@@ -114,7 +114,7 @@ create table if not exists public.package_receipt_refunds (
     check (payment_method in ('cash','pix','credit_card','debit_card','bank_transfer','other')),
   refunded_at timestamptz not null default now(),
   reason text not null,
-  recorded_by uuid references auth.users(id),
+  recorded_by uuid not null default auth.uid() references auth.users(id),
   created_at timestamptz not null default now(),
   foreign key (school_id, package_receipt_id, student_package_id)
     references public.package_receipts(school_id, id, student_package_id) on delete restrict
