@@ -93,7 +93,7 @@
         if (!fullName || !schoolName) throw new Error("Preencha seu nome e o nome da escola para continuar.");
         if (password.length < 8) throw new Error("Use uma senha com pelo menos 8 caracteres.");
         const { data, error } = await client.auth.signUp({
-          email, password, options: { data: { full_name: fullName } }
+          email, password, options: { data: { full_name: fullName }, emailRedirectTo: "https://hidekiduarte.github.io/kwmt/login.html" }
         });
         if (error) throw error;
         if (data.session) {
@@ -141,6 +141,30 @@
       render();
     }
   });
+
+
+  const resendButton = $("resendConfirmation");
+  if (resendButton) {
+    resendButton.addEventListener("click", async () => {
+      if (!client) return status("A conexão ainda não está disponível.", true);
+      const email = $("email").value.trim().toLowerCase();
+      if (!email) return status("Digite seu e-mail antes de pedir outro link.", true);
+      resendButton.disabled = true;
+      try {
+        const { error } = await client.auth.resend({
+          type: "signup",
+          email,
+          options: { emailRedirectTo: "https://hidekiduarte.github.io/kwmt/login.html" }
+        });
+        if (error) throw error;
+        status("Enviamos um novo link. Abra a mensagem mais recente do Supabase no seu e-mail.");
+      } catch (error) {
+        status(friendlyError(error), true);
+      } finally {
+        resendButton.disabled = false;
+      }
+    });
+  }
 
   $("signOut").addEventListener("click", async () => {
     if (!client) return;
