@@ -71,7 +71,7 @@ returns trigger
 language plpgsql
 security invoker
 set search_path = ''
-as $
+as $$
 begin
   if tg_table_name = 'package_receipts' then
     new.received_by := auth.uid();
@@ -83,7 +83,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 revoke all on function public.set_package_cash_event_actor() from public, anon, authenticated;
 create trigger trg_set_package_receipt_actor
 before insert on public.package_receipts
