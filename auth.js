@@ -1,131 +1,153 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const cfg = window.KWMT_SUPABASE_CONFIG || {};
-  const validConfig = cfg.url && cfg.publishableKey &&
-    cfg.url.startsWith("https://") &&
-    !cfg.url.includes("COLE_AQUI") &&
-    !cfg.publishableKey.includes("COLE_AQUI");
+  const validConfig = cfg.url && cfg.publishableKey && cfg.url.startsWith("https://");
+  let client = null;
+  let role = "owner";
+  let flow = "signup";
+
   const status = (message, error = false) => {
     const el = $("authStatus");
     el.textContent = message;
     el.classList.toggle("error", error);
     el.hidden = false;
   };
-  let mode = "owner";
-  let supabaseClient = null;
+  const friendlyError = (error) => {
+    const msg = String(error?.message || "");
+    if (/after \d+ seconds|rate limit|too many requests/i.test(msg)) {
+      const seconds = msg.match(/(\d+) seconds/i)?.[1];
+      return "O Supabase está limitando novas tentativas por segurança" +
+        (seconds ? ". Aguarde " + seconds + " segundos" : "") +
+        " e tente novamente uma única vez. Não precisa preencher tudo de novo.";
+    }
+    if (/already registered|user already exists/i.test(msg)) {
+      return "Este e-mail já tem uma conta. Escolha “Já tenho conta” e entre com sua senha.";
+    }
+    if (/email not confirmed/i.test(msg)) {
+      return "Seu e-mail ainda não foi confirmado. Abra a mensagem enviada pelo Supabase e confirme o cadastro antes de entrar.";
+    }
+    return msg || "Não foi possível concluir. Confira os dados e tente novamente.";
+  };
 
-  function setMode(next) {
-    mode = next;
+  function render() {
     document.querySelectorAll("[data-role]").forEach((el) => {
-      const selected = el.dataset.role === mode;
+      const selected = el.dataset.role === role;
       el.classList.toggle("selected", selected);
       el.setAttribute("aria-pressed", String(selected));
     });
-    $("ownerFields").hidden = mode !== "owner";
-    $("authTitle").textContent = mode === "owner" ? "Acesse sua escola." : "Acesse sua agenda.";
-    $("authDescription").textContent = mode === "owner"
-      ? "Entre ou crie a conta responsável pela gestão da escola."
-      : "Entre com o e-mail e a senha vinculados ao convite da sua escola.";
-    $("authSubmit").textContent = mode === "owner" ? "Entrar / criar conta" : "Entrar como professor";
+    document.querySelectorAll("[data-flow]").forEach((el) => {
+      const selected = el.dataset.flow === flow;
+      el.classList.toggle("selected", selected);
+      el.setAttribute("aria-pressed", String(selected));
+    });
+    $("ownerFields").hidden = role !== "owner" || flow !== "signup";
+    $("authTitle").textContent = flow === "signup"
+      ? "Vamos criar seu acesso."
+      : role === "owner" ? "Bem-vindo de volta." : "Acesse sua agenda.";
+    $("authDescription").textContent = flow === "signup"
+      ? "Cadastre sua conta de proprietário em poucos passos."
+      : "Entre com o e-mail e a senha da sua conta.";
+    $("authSubmit").textContent = flow === "signup" ? "Criar minha conta" : "Entrar";
+    $("password").autocomplete = flow === "signup" ? "new-password" : "current-password";
+    $("loginOnlyNote").hidden = flow !== "login";
+    $("signupOnlyNote").hidden = flow !== "signup" || role !== "owner";
   }
 
   document.querySelectorAll("[data-role]").forEach((el) =>
-    el.addEventListener("click", () => setMode(el.dataset.role))
+    el.addEventListener("click", () => { role = el.dataset.role; render(); })
+  );
+  document.querySelectorAll("[data-flow]").forEach((el) =>
+    el.addEventListener("click", () => { flow = el.dataset.flow; render(); })
   );
 
   if (!validConfig) {
-    status("Falta configurar a Project URL e a Publishable key do Supabase. O acesso ficará desativado até isso ser feito.");
+    status("A conexão do Supabase ainda não está configurada. Avise o suporte da KWMT.", true);
   } else if (!window.supabase?.createClient) {
-    status("Não foi possível carregar a biblioteca de conexão. Verifique sua internet e recarregue a página.", true);
+    status("Não foi possível carregar a conexão. Verifique a internet e recarregue a página.", true);
   } else {
-    supabaseClient = window.supabase.createClient(cfg.url, cfg.publishableKey, {
+    client = window.supabase.createClient(cfg.url, cfg.publishableKey, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
     });
-    supabaseClient.auth.getSession().then(({ data, error }) => {
-      if (error) status("Não consegui verificar sua sessão: " + error.message, true);
-      else if (data.session) status("Você já está autenticado. A próxima etapa é conectar seus dados ao painel.");
+    client.auth.getSession().then(({ data, error }) => {
+      if (error) status(friendlyError(error), true);
+      else if (data.session) status("Você já está conectado. O próximo passo é abrir seu painel KWMT.");
     });
   }
 
   $("authForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!supabaseClient) {
-      status("A conexão ainda não foi configurada. Precisamos inserir a Project URL e a Publishable key.", true);
+    if (!client) {
+      status("A conexão ainda não está disponível. Tente novamente mais tarde.", true);
       return;
     }
-    const email = $("email").value.trim();
+    const email = $("email").value.trim().toLowerCase();
     const password = $("password").value;
     const button = $("authSubmit");
     button.disabled = true;
-    button.textContent = "Conectando…";
+    button.textContent = flow === "signup" ? "Criando conta…" : "Entrando…";
     try {
-      let result;
-      if (mode === "owner" && $("ownerName").value.trim() && $("schoolName").value.trim()) {
+      if (flow === "signup") {
+        if (role !== "owner") throw new Error("O cadastro inicial é feito pelo proprietário. O professor precisa receber um convite da escola.");
         const fullName = $("ownerName").value.trim();
         const schoolName = $("schoolName").value.trim();
-        result = await supabaseClient.auth.signUp({
-          email, password,
-          options: { data: { full_name: fullName } }
+        if (!fullName || !schoolName) throw new Error("Preencha seu nome e o nome da escola para continuar.");
+        if (password.length < 8) throw new Error("Use uma senha com pelo menos 8 caracteres.");
+        const { data, error } = await client.auth.signUp({
+          email, password, options: { data: { full_name: fullName } }
         });
-        if (result.error) throw result.error;
-        if (result.data.session) {
-          const created = await supabaseClient.rpc("create_school", {
-            school_name: schoolName,
-            operation_kind: "surf_school"
+        if (error) throw error;
+        if (data.session) {
+          const { error: createError } = await client.rpc("create_school", {
+            school_name: schoolName, operation_kind: "surf_school"
           });
-          if (created.error) throw created.error;
-          status("Conta criada e escola registrada no banco. A próxima etapa é carregar os dados reais no painel.");
+          if (createError) throw createError;
+          status("Conta criada e escola cadastrada! Seu primeiro acesso foi concluído.");
         } else {
           localStorage.setItem("kwmt_pending_school", JSON.stringify({
             name: schoolName, operation: "surf_school"
           }));
-          status("Conta iniciada. Confirme seu e-mail e depois entre com sua senha para concluir o cadastro da escola.");
+          status("Quase pronto! Enviamos um link de confirmação para seu e-mail. Confirme a mensagem e depois volte aqui em “Já tenho conta” para concluir o cadastro da escola.");
         }
       } else {
-        result = await supabaseClient.auth.signInWithPassword({ email, password });
-        if (result.error) throw result.error;
-        if (mode === "owner") {
-          const pending = localStorage.getItem("kwmt_pending_school");
-          if (pending) {
-            const school = JSON.parse(pending);
-            const created = await supabaseClient.rpc("create_school", {
-              school_name: school.name,
-              operation_kind: school.operation || "surf_school"
-            });
-            if (created.error) throw created.error;
-            localStorage.removeItem("kwmt_pending_school");
-            status("Acesso confirmado e escola cadastrada. Próxima etapa: painel conectado.");
-          } else {
-            const membership = await supabaseClient.from("school_members")
-              .select("role,school_id").eq("user_id", result.data.user.id)
-              .eq("role", "owner").eq("active", true);
-            if (membership.error) throw membership.error;
-            if (!membership.data.length) throw new Error("Esta conta ainda não está vinculada como proprietária de uma escola.");
-            status("Login confirmado. Sua conta de proprietário está vinculada à KWMT.");
-          }
+        const { data, error } = await client.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        const pending = role === "owner" ? localStorage.getItem("kwmt_pending_school") : null;
+        if (pending) {
+          const school = JSON.parse(pending);
+          const { error: createError } = await client.rpc("create_school", {
+            school_name: school.name, operation_kind: school.operation || "surf_school"
+          });
+          if (createError) throw createError;
+          localStorage.removeItem("kwmt_pending_school");
+          status("Pronto! Seu e-mail foi confirmado e sua escola foi cadastrada.");
         } else {
-          const membership = await supabaseClient.from("school_members")
-            .select("role,school_id").eq("user_id", result.data.user.id)
-            .eq("role", "teacher").eq("active", true);
-          if (membership.error) throw membership.error;
-          if (!membership.data.length) throw new Error("Esta conta ainda não recebeu um convite ativo de professor.");
-          status("Login de professor confirmado. A próxima etapa é abrir a agenda vinculada à sua escola.");
+          const wantedRole = role === "owner" ? "owner" : "teacher";
+          const { data: memberships, error: memberError } = await client
+            .from("school_members").select("role,school_id")
+            .eq("user_id", data.user.id).eq("role", wantedRole).eq("active", true);
+          if (memberError) throw memberError;
+          if (!memberships?.length) {
+            throw new Error(role === "owner"
+              ? "Esta conta ainda não está vinculada como proprietária. Se é seu primeiro cadastro, use “Primeiro acesso”."
+              : "Esta conta ainda não recebeu um convite ativo de professor.");
+          }
+          status("Login confirmado! Sua conta está vinculada à KWMT.");
         }
       }
     } catch (error) {
-      status(error.message || "Não foi possível concluir o acesso.", true);
+      status(friendlyError(error), true);
     } finally {
       button.disabled = false;
-      button.textContent = mode === "owner" ? "Entrar / criar conta" : "Entrar como professor";
+      render();
     }
   });
 
   $("signOut").addEventListener("click", async () => {
-    if (!supabaseClient) return;
-    const { error } = await supabaseClient.auth.signOut();
-    if (error) status(error.message, true);
+    if (!client) return;
+    const { error } = await client.auth.signOut();
+    if (error) status(friendlyError(error), true);
     else status("Você saiu da sua conta.");
   });
 
-  setMode("owner");
+  render();
 })();
