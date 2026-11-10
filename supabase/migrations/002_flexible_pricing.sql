@@ -33,7 +33,7 @@ create table if not exists public.student_packages (
   student_id uuid not null,
   package_offer_id uuid not null,
   lessons_purchased integer not null check (lessons_purchased > 0),
-  price_paid numeric(10,2) not null check (price_paid >= 0),
+  contracted_amount numeric(10,2) not null check (contracted_amount >= 0),
   purchased_at timestamptz not null default now(),
   expires_at timestamptz,
   status text not null default 'active'
