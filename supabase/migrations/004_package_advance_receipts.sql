@@ -14,7 +14,7 @@ comment on column public.schools.package_debt_limit is
 -- 2) Recebimentos sao eventos imutaveis. Anulacoes e reembolsos ficam em tabelas proprias.
 create table if not exists public.package_receipts (
   id uuid primary key default gen_random_uuid(),
-  school_id uuid not null references public.schools(id) on delete cascade,
+  school_id uuid not null references public.schools(id) on delete restrict,
   student_package_id uuid not null,
   amount numeric(10,2) not null check (amount > 0),
   payment_method text not null
@@ -22,10 +22,10 @@ create table if not exists public.package_receipts (
   received_at timestamptz not null default now(),
   reference text,
   notes text,
-  received_by uuid references auth.users(id),
+  received_by uuid not null default auth.uid() references auth.users(id),
   created_at timestamptz not null default now(),
   foreign key (school_id, student_package_id)
-    references public.student_packages(school_id, id) on delete cascade,
+    references public.student_packages(school_id, id) on delete restrict,
   unique (school_id, id, student_package_id)
 );
 
@@ -65,24 +65,48 @@ before update or delete on public.package_receipts
 for each row execute function public.reject_package_receipt_mutation();
 revoke all on function public.reject_package_receipt_mutation() from public, anon, authenticated;
 
+-- A autoria e definida no banco; valores enviados pelo cliente sao ignorados.
+create or replace function public.set_package_cash_event_actor()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $
+begin
+  if tg_table_name = 'package_receipts' then
+    new.received_by := auth.uid();
+  else
+    new.recorded_by := auth.uid();
+  end if;
+  if auth.uid() is null then
+    raise exception 'Authentication required to record package cash events';
+  end if;
+  return new;
+end;
+$;
+revoke all on function public.set_package_cash_event_actor() from public, anon, authenticated;
+create trigger trg_set_package_receipt_actor
+before insert on public.package_receipts
+for each row execute function public.set_package_cash_event_actor();
+
 -- 3) Anulacao e reembolso sao eventos append-only distintos.
 create table if not exists public.package_receipt_voids (
   id uuid primary key default gen_random_uuid(),
-  school_id uuid not null references public.schools(id) on delete cascade,
+  school_id uuid not null references public.schools(id) on delete restrict,
   student_package_id uuid not null,
   package_receipt_id uuid not null,
   reason text not null,
   voided_at timestamptz not null default now(),
-  recorded_by uuid references auth.users(id),
+  recorded_by uuid not null default auth.uid() references auth.users(id),
   created_at timestamptz not null default now(),
   foreign key (school_id, package_receipt_id, student_package_id)
-    references public.package_receipts(school_id, id, student_package_id) on delete cascade,
+    references public.package_receipts(school_id, id, student_package_id) on delete restrict,
   unique (school_id, package_receipt_id)
 );
 
 create table if not exists public.package_receipt_refunds (
   id uuid primary key default gen_random_uuid(),
-  school_id uuid not null references public.schools(id) on delete cascade,
+  school_id uuid not null references public.schools(id) on delete restrict,
   student_package_id uuid not null,
   package_receipt_id uuid not null,
   amount numeric(10,2) not null check (amount > 0),
@@ -93,11 +117,18 @@ create table if not exists public.package_receipt_refunds (
   recorded_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
   foreign key (school_id, package_receipt_id, student_package_id)
-    references public.package_receipts(school_id, id, student_package_id) on delete cascade
+    references public.package_receipts(school_id, id, student_package_id) on delete restrict
 );
 
 create index if not exists idx_package_receipt_voids_package
   on public.package_receipt_voids(school_id, student_package_id);
+create trigger trg_set_package_receipt_void_actor
+before insert on public.package_receipt_voids
+for each row execute function public.set_package_cash_event_actor();
+create trigger trg_set_package_receipt_refund_actor
+before insert on public.package_receipt_refunds
+for each row execute function public.set_package_cash_event_actor();
+
 create index if not exists idx_package_receipt_refunds_receipt_date
   on public.package_receipt_refunds(school_id, package_receipt_id, refunded_at);
 
