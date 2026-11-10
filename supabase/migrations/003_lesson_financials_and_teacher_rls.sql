@@ -123,8 +123,21 @@ create or replace function public.validate_student_package_lifecycle()
 returns trigger
 language plpgsql
 set search_path = ''
-as $
+as $$
 begin
+  if tg_op = 'INSERT' then
+    if new.lessons_used <> 0 then
+      raise exception 'A new package must start with zero lessons used';
+    end if;
+    if new.status <> 'active' then
+      raise exception 'A new package must start active';
+    end if;
+    if new.expires_at is not null and new.expires_at <= now() then
+      raise exception 'A new package cannot be created with an expired validity date';
+    end if;
+    return new;
+  end if;
+
   if old.status in ('completed','expired','cancelled')
      and new.status is distinct from old.status then
     raise exception 'A terminal package status cannot be reactivated or changed';
@@ -135,14 +148,22 @@ begin
     raise exception 'A package can only be completed after all lessons are consumed';
   end if;
 
+  if new.lessons_used < old.lessons_used then
+    raise exception 'Consumed package credits cannot be restored by editing the counter';
+  end if;
+
+  if new.lessons_used > new.lessons_purchased then
+    raise exception 'Consumed lessons cannot exceed purchased lessons';
+  end if;
+
   return new;
 end;
-$;
+$$;
 
 revoke all on function public.validate_student_package_lifecycle() from public, anon, authenticated;
 drop trigger if exists trg_validate_student_package_lifecycle on public.student_packages;
 create trigger trg_validate_student_package_lifecycle
-before update of status, lessons_used on public.student_packages
+before insert or update of status, lessons_used on public.student_packages
 for each row execute function public.validate_student_package_lifecycle();
 
 -- 4) Ao concluir, validar presença e gerar a fotografia financeira uma única vez.
