@@ -1,6 +1,6 @@
 -- KWMT migration 003: aula vinculada a preço/pacote, repasse automático e RLS refinado
 -- Aplicar somente depois de revisar e testar as migrations 001 e 002.
--- Esta migration é aditiva; não executa nenhuma alteração no projeto Supabase por si só.
+-- Esta migration é aditiva; não executa alterações no projeto Supabase até ser aplicada.
 
 -- 1) Vincular cada aula ao tipo comercial e, quando aplicável, ao pacote consumido.
 alter table public.lessons
@@ -38,8 +38,8 @@ create index if not exists idx_lessons_school_lesson_type
 create index if not exists idx_lessons_school_student_package
   on public.lessons(school_id, student_package_id);
 
--- Controle de créditos consumidos. O bloqueio da linha do pacote na função
--- financeira impede duas confirmações concorrentes de consumirem o mesmo crédito.
+-- 2) Controle de créditos consumidos. O bloqueio da linha do pacote na função
+-- financeira evita consumo concorrente do mesmo crédito.
 alter table public.student_packages
   add column if not exists lessons_used integer not null default 0;
 
@@ -57,9 +57,7 @@ begin
 end;
 $$;
 
--- 2) Refinar a leitura da tabela teachers:
--- o professor só enxerga a própria linha se continuar ativo como membro
--- da mesma escola. O proprietário mantém acesso à equipe da escola.
+-- 3) Professor só lê a própria linha quando continua ativo na escola.
 drop policy if exists "teachers owner or self read" on public.teachers;
 drop policy if exists "teachers owner or active assigned teacher read" on public.teachers;
 create policy "teachers owner or active assigned teacher read"
@@ -70,12 +68,9 @@ using (
   or public.is_assigned_teacher(id)
 );
 
--- 3) Criar o registro financeiro automaticamente quando uma aula passa
--- de qualquer estado não concluído para completed.
--- Para pacote: reconhece o valor efetivamente pago dividido pelos créditos,
--- ajustando o último crédito para absorver eventual diferença de arredondamento.
--- Para aula avulsa: reconhece o preço atual do lesson_type.
--- O repasse usa a regra específica do tipo; na ausência dela, usa a regra padrão.
+-- 4) Ao concluir, validar presença e gerar a fotografia financeira uma única vez.
+-- Pacotes reconhecem o valor contratado proporcional por crédito, independentemente
+-- do valor já recebido. O caixa recebido será controlado separadamente na migration 004.
 create or replace function public.record_lesson_financials()
 returns trigger
 language plpgsql
@@ -93,11 +88,20 @@ declare
   v_package_student_id uuid;
   v_lesson_price numeric(10,2);
 begin
-  if old.status = 'completed' or new.status <> 'completed' then
+  if new.status <> 'completed' or old.status = 'completed' then
     return new;
   end if;
 
-  -- Se já existe fotografia financeira, não consome crédito nem cria novo lançamento.
+  if old.status = 'cancelled' then
+    raise exception 'Cancelled lessons cannot be completed';
+  end if;
+
+  if new.attendance_confirmed_at is null
+     or new.attendance_confirmed_by is null then
+    raise exception 'Lesson completion requires confirmed attendance';
+  end if;
+
+  -- Se já existe fotografia financeira, não consome outro crédito.
   if exists (
     select 1
     from public.lesson_financial_records r
@@ -136,8 +140,7 @@ begin
 
     v_gross := round(v_package_price / v_lessons_purchased, 2);
 
-    -- Ajuste de centavos no último crédito para que a soma seja exatamente
-    -- igual ao valor efetivamente pago pelo pacote.
+    -- Ajusta os centavos restantes no último crédito.
     if v_lessons_used + 1 = v_lessons_purchased then
       v_gross := v_package_price
         - (round(v_package_price / v_lessons_purchased, 2) * (v_lessons_purchased - 1));
@@ -184,20 +187,12 @@ begin
   end if;
 
   insert into public.lesson_financial_records (
-    school_id,
-    lesson_id,
-    lesson_type_id,
-    student_package_id,
-    gross_amount,
-    teacher_payout_amount
+    school_id, lesson_id, lesson_type_id, student_package_id,
+    gross_amount, teacher_payout_amount
   )
   values (
-    new.school_id,
-    new.id,
-    new.lesson_type_id,
-    new.student_package_id,
-    v_gross,
-    v_payout
+    new.school_id, new.id, new.lesson_type_id, new.student_package_id,
+    v_gross, v_payout
   )
   on conflict (school_id, lesson_id) do nothing;
 
@@ -212,9 +207,8 @@ for each row
 when (old.status is distinct from 'completed' and new.status = 'completed')
 execute function public.record_lesson_financials();
 
--- A função é invocada pelo trigger; não deve ser chamada diretamente pelo cliente.
+-- A função é executada pelo trigger; clientes não podem invocá-la diretamente.
 revoke all on function public.record_lesson_financials() from public, anon, authenticated;
 
--- Observação: a política de lessons já usa is_assigned_teacher(teacher_id),
--- que exige professor ativo e vínculo ativo em school_members. A confirmação
--- continua passando pela RPC confirm_lesson_attendance(), não por UPDATE direto.
+-- A RPC confirm_lesson_attendance() da migration 001 já grava os dois campos
+-- de confirmação e só aceita aulas scheduled cujo horário terminou.
