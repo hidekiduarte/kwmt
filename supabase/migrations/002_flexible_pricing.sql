@@ -129,9 +129,11 @@ create policy "owner reads lesson financial records" on public.lesson_financial_
 
 revoke all on public.lesson_types, public.package_offers, public.student_packages,
   public.teacher_payout_rules, public.lesson_financial_records from anon;
-grant select, insert, update, delete on public.lesson_types, public.package_offers,
+grant select, insert, update on public.lesson_types, public.package_offers,
   public.student_packages, public.teacher_payout_rules, public.lesson_financial_records
   to authenticated;
+-- Pacotes vendidos não podem ser apagados fisicamente: preserve o histórico e
+-- use status = 'cancelled' para desativar um pacote sem destruir seus vínculos.
 
 -- Impede que professores consultem os campos legados de remuneração na tabela
 -- teachers. Donos configuram e consultam valores em teacher_payout_rules.
