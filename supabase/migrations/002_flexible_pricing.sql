@@ -132,6 +132,8 @@ revoke all on public.lesson_types, public.package_offers, public.student_package
 grant select, insert, update on public.lesson_types, public.package_offers,
   public.student_packages, public.teacher_payout_rules, public.lesson_financial_records
   to authenticated;
+grant delete on public.lesson_types, public.package_offers,
+  public.teacher_payout_rules, public.lesson_financial_records to authenticated;
 -- Pacotes vendidos não podem ser apagados fisicamente: preserve o histórico e
 -- use status = 'cancelled' para desativar um pacote sem destruir seus vínculos.
 
