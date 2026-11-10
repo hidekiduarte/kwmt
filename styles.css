@@ -33,3 +33,23 @@
 .auth-status[hidden],#ownerFields[hidden]{display:none}
 .login-submit:disabled{opacity:.6;cursor:wait}
 .login-signout{display:block;margin:14px auto 0;background:transparent;border:0;color:var(--muted);font-size:11px;text-decoration:underline;cursor:pointer}
+
+
+/* Cadastro simplificado KWMT */
+.login-flow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 18px}
+.flow-choice{padding:13px 8px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;color:var(--ink);font-weight:700;font-size:13px}
+.flow-choice.selected{background:var(--navy);border-color:var(--navy);color:white}
+.login-card .login-field input{min-height:48px;font-size:16px}
+.login-card .login-submit{min-height:50px;font-size:15px;cursor:pointer}
+.login-card .login-role{min-height:92px}
+.login-card .note{font-size:12px;line-height:1.5}
+.login-foot{font-size:12px}
+@media(max-width:520px){
+ .login-page{display:block;padding:16px 12px}
+ .login-shell{width:100%;max-width:470px;margin:0 auto}
+ .login-brand{margin-bottom:14px}
+ .login-card{padding:20px 16px}
+ .login-card h1{font-size:27px}
+ .login-roles{gap:8px}
+ .login-role{padding:12px 9px}
+}
