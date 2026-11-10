@@ -1,0 +1,220 @@
+-- KWMT migration 003: aula vinculada a preço/pacote, repasse automático e RLS refinado
+-- Aplicar somente depois de revisar e testar as migrations 001 e 002.
+-- Esta migration é aditiva; não executa nenhuma alteração no projeto Supabase por si só.
+
+-- 1) Vincular cada aula ao tipo comercial e, quando aplicável, ao pacote consumido.
+alter table public.lessons
+  add column if not exists lesson_type_id uuid,
+  add column if not exists student_package_id uuid;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'lessons_school_lesson_type_fk'
+      and conrelid = 'public.lessons'::regclass
+  ) then
+    alter table public.lessons
+      add constraint lessons_school_lesson_type_fk
+      foreign key (school_id, lesson_type_id)
+      references public.lesson_types(school_id, id);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'lessons_school_student_package_fk'
+      and conrelid = 'public.lessons'::regclass
+  ) then
+    alter table public.lessons
+      add constraint lessons_school_student_package_fk
+      foreign key (school_id, student_package_id)
+      references public.student_packages(school_id, id);
+  end if;
+end;
+$$;
+
+create index if not exists idx_lessons_school_lesson_type
+  on public.lessons(school_id, lesson_type_id);
+create index if not exists idx_lessons_school_student_package
+  on public.lessons(school_id, student_package_id);
+
+-- Controle de créditos consumidos. O bloqueio da linha do pacote na função
+-- financeira impede duas confirmações concorrentes de consumirem o mesmo crédito.
+alter table public.student_packages
+  add column if not exists lessons_used integer not null default 0;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'student_packages_lessons_used_valid'
+      and conrelid = 'public.student_packages'::regclass
+  ) then
+    alter table public.student_packages
+      add constraint student_packages_lessons_used_valid
+      check (lessons_used >= 0 and lessons_used <= lessons_purchased);
+  end if;
+end;
+$$;
+
+-- 2) Refinar a leitura da tabela teachers:
+-- o professor só enxerga a própria linha se continuar ativo como membro
+-- da mesma escola. O proprietário mantém acesso à equipe da escola.
+drop policy if exists "teachers owner or self read" on public.teachers;
+drop policy if exists "teachers owner or active assigned teacher read" on public.teachers;
+create policy "teachers owner or active assigned teacher read"
+on public.teachers
+for select to authenticated
+using (
+  public.is_school_owner(school_id)
+  or public.is_assigned_teacher(id)
+);
+
+-- 3) Criar o registro financeiro automaticamente quando uma aula passa
+-- de qualquer estado não concluído para completed.
+-- Para pacote: reconhece o valor efetivamente pago dividido pelos créditos,
+-- ajustando o último crédito para absorver eventual diferença de arredondamento.
+-- Para aula avulsa: reconhece o preço atual do lesson_type.
+-- O repasse usa a regra específica do tipo; na ausência dela, usa a regra padrão.
+create or replace function public.record_lesson_financials()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_gross numeric(10,2);
+  v_payout numeric(10,2);
+  v_package_price numeric(10,2);
+  v_lessons_purchased integer;
+  v_lessons_used integer;
+  v_package_status text;
+  v_package_expires_at timestamptz;
+  v_package_student_id uuid;
+  v_lesson_price numeric(10,2);
+begin
+  if old.status = 'completed' or new.status <> 'completed' then
+    return new;
+  end if;
+
+  -- Se já existe fotografia financeira, não consome crédito nem cria novo lançamento.
+  if exists (
+    select 1
+    from public.lesson_financial_records r
+    where r.school_id = new.school_id
+      and r.lesson_id = new.id
+  ) then
+    return new;
+  end if;
+
+  if new.student_package_id is not null then
+    select sp.price_paid, sp.lessons_purchased, sp.lessons_used,
+           sp.status, sp.expires_at, sp.student_id
+      into v_package_price, v_lessons_purchased, v_lessons_used,
+           v_package_status, v_package_expires_at, v_package_student_id
+    from public.student_packages sp
+    where sp.school_id = new.school_id
+      and sp.id = new.student_package_id
+    for update;
+
+    if not found then
+      raise exception 'Student package not found for this school';
+    end if;
+
+    if v_package_student_id <> new.student_id then
+      raise exception 'Student package does not belong to the lesson student';
+    end if;
+
+    if v_package_status <> 'active'
+       or (v_package_expires_at is not null and v_package_expires_at < now()) then
+      raise exception 'Student package is not active or has expired';
+    end if;
+
+    if v_lessons_used >= v_lessons_purchased then
+      raise exception 'Student package has no remaining lessons';
+    end if;
+
+    v_gross := round(v_package_price / v_lessons_purchased, 2);
+
+    -- Ajuste de centavos no último crédito para que a soma seja exatamente
+    -- igual ao valor efetivamente pago pelo pacote.
+    if v_lessons_used + 1 = v_lessons_purchased then
+      v_gross := v_package_price
+        - (round(v_package_price / v_lessons_purchased, 2) * (v_lessons_purchased - 1));
+    end if;
+
+    update public.student_packages
+    set lessons_used = lessons_used + 1,
+        status = case
+          when lessons_used + 1 >= lessons_purchased then 'completed'
+          else status
+        end
+    where school_id = new.school_id
+      and id = new.student_package_id;
+  else
+    if new.lesson_type_id is null then
+      raise exception 'A lesson type is required for a non-package lesson';
+    end if;
+
+    select lt.price
+      into v_lesson_price
+    from public.lesson_types lt
+    where lt.school_id = new.school_id
+      and lt.id = new.lesson_type_id
+      and lt.active = true;
+
+    if not found then
+      raise exception 'Active lesson type not found for this school';
+    end if;
+
+    v_gross := v_lesson_price;
+  end if;
+
+  select pr.payout_amount
+    into v_payout
+  from public.teacher_payout_rules pr
+  where pr.school_id = new.school_id
+    and pr.teacher_id = new.teacher_id
+    and (pr.lesson_type_id = new.lesson_type_id or pr.lesson_type_id is null)
+  order by (pr.lesson_type_id is not null) desc
+  limit 1;
+
+  if not found then
+    raise exception 'No payout rule configured for this teacher';
+  end if;
+
+  insert into public.lesson_financial_records (
+    school_id,
+    lesson_id,
+    lesson_type_id,
+    student_package_id,
+    gross_amount,
+    teacher_payout_amount
+  )
+  values (
+    new.school_id,
+    new.id,
+    new.lesson_type_id,
+    new.student_package_id,
+    v_gross,
+    v_payout
+  )
+  on conflict (school_id, lesson_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_record_lesson_financials on public.lessons;
+create trigger trg_record_lesson_financials
+after update of status on public.lessons
+for each row
+when (old.status is distinct from 'completed' and new.status = 'completed')
+execute function public.record_lesson_financials();
+
+-- A função é invocada pelo trigger; não deve ser chamada diretamente pelo cliente.
+revoke all on function public.record_lesson_financials() from public, anon, authenticated;
+
+-- Observação: a política de lessons já usa is_assigned_teacher(teacher_id),
+-- que exige professor ativo e vínculo ativo em school_members. A confirmação
+-- continua passando pela RPC confirm_lesson_attendance(), não por UPDATE direto.
