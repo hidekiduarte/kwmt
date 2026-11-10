@@ -133,8 +133,9 @@ grant select, insert, update, delete on public.lesson_types, public.package_offe
   public.student_packages, public.teacher_payout_rules, public.lesson_financial_records
   to authenticated;
 
--- Os valores antigos não devem permanecer na tabela de identidade do professor.
--- A remuneração agora fica exclusivamente em teacher_payout_rules e nos registros
--- financeiros restritos ao proprietário.
-alter table public.teachers drop column if exists hourly_rate;
-alter table public.teachers drop column if exists half_hour_rate;
+-- Impede que professores consultem os campos legados de remuneração na tabela
+-- teachers. Donos configuram e consultam valores em teacher_payout_rules.
+-- Mantemos as colunas antigas nesta migração para não apagar dados históricos.
+revoke select on public.teachers from authenticated;
+grant select (id, school_id, user_id, name, active, created_at)
+  on public.teachers to authenticated;
