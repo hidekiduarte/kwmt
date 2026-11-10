@@ -13,6 +13,18 @@
   };
   let mode = "owner";
   let supabaseClient = null;
+  let completingPendingSchool = false;
+
+  // O painel do proprietário já existe em index.html.
+  function loadDashboard() {
+    window.location.href = "./index.html";
+  }
+
+  // A agenda exclusiva do professor ainda não existe neste projeto.
+  // Não redirecionamos para o painel administrativo para evitar expor telas indevidas.
+  function loadTeacherAgenda() {
+    status("Login confirmado. A agenda exclusiva do professor ainda está sendo construída; por enquanto, sua sessão está ativa.");
+  }
 
   function setMode(next) {
     mode = next;
@@ -60,9 +72,18 @@
     button.textContent = "Conectando…";
     try {
       let result;
-      if (mode === "owner" && $("ownerName").value.trim() && $("schoolName").value.trim()) {
-        const fullName = $("ownerName").value.trim();
-        const schoolName = $("schoolName").value.trim();
+      const fullName = $("ownerName").value.trim();
+      const schoolName = $("schoolName").value.trim();
+      const hasFullName = fullName.length > 0;
+      const hasSchoolName = schoolName.length > 0;
+
+      // Um dos campos preenchido indica intenção de cadastro; os dois são obrigatórios.
+      if (mode === "owner" && (hasFullName || hasSchoolName) && !(hasFullName && hasSchoolName)) {
+        status("Para criar sua escola, preencha seu nome completo e o nome da escola.", true);
+        return;
+      }
+
+      if (mode === "owner" && hasFullName && hasSchoolName) {
         result = await supabaseClient.auth.signUp({
           email,
           password,
@@ -92,6 +113,7 @@
         if (mode === "owner") {
           const pending = localStorage.getItem("kwmt_pending_school");
           if (pending) {
+            completingPendingSchool = true;
             const school = JSON.parse(pending);
             const created = await supabaseClient.rpc("create_school", {
               school_name: school.name,
@@ -99,14 +121,17 @@
             });
             if (created.error) throw created.error;
             localStorage.removeItem("kwmt_pending_school");
-            status("Acesso confirmado e escola cadastrada. Próxima etapa: painel conectado.");
+            completingPendingSchool = false;
+            loadDashboard();
+            return;
           } else {
             const membership = await supabaseClient.from("school_members")
               .select("role,school_id").eq("user_id", result.data.user.id)
               .eq("role", "owner").eq("active", true);
             if (membership.error) throw membership.error;
             if (!membership.data.length) throw new Error("Esta conta ainda não está vinculada como proprietária de uma escola.");
-            status("Login confirmado. Sua conta de proprietário está vinculada à KWMT.");
+            loadDashboard();
+            return;
           }
         } else {
           const membership = await supabaseClient.from("school_members")
@@ -114,11 +139,21 @@
             .eq("role", "teacher").eq("active", true);
           if (membership.error) throw membership.error;
           if (!membership.data.length) throw new Error("Esta conta ainda não recebeu um convite ativo de professor.");
-          status("Login de professor confirmado. A próxima etapa é abrir a agenda vinculada à sua escola.");
+          loadTeacherAgenda();
+          return;
         }
       }
     } catch (error) {
-      status(error.message || "Não foi possível concluir o acesso.", true);
+      if (completingPendingSchool) {
+        localStorage.removeItem("kwmt_pending_school");
+        completingPendingSchool = false;
+      }
+      const message = error.message || "Não foi possível concluir o acesso.";
+      if (mode === "owner" && !fullName && !schoolName && /invalid login credentials|invalid email or password/i.test(message)) {
+        status("Não foi possível entrar. Se você ainda não tem conta, para criar sua escola, preencha seu nome completo e o nome da escola.", true);
+      } else {
+        status(message, true);
+      }
     } finally {
       button.disabled = false;
       button.textContent = mode === "owner" ? "Entrar / criar conta" : "Entrar como professor";
