@@ -135,7 +135,7 @@ create or replace function public.package_outstanding_amount(
 )
 returns numeric(10,2)
 language sql
-stable
+volatile
 security invoker
 set search_path = ''
 as $$
