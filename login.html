@@ -17,9 +17,9 @@
       </div>
       <section class="login-card">
         <p class="eyebrow">ようこそ · BEM-VINDO</p>
-        <h1 id="authTitle">Acesse sua escola.</h1>
-        <p class="login-intro" id="authDescription">Entre ou crie a conta responsável pela gestão da escola.</p>
-        <p class="eyebrow">ESCOLHA SEU ACESSO</p>
+        <h1 id="authTitle">Vamos criar seu acesso.</h1>
+        <p class="login-intro" id="authDescription">Cadastre sua conta de proprietário em poucos passos.</p>
+        <p class="eyebrow">QUEM VAI ACESSAR?</p>
         <div class="login-roles">
           <button class="login-role selected" type="button" data-role="owner" aria-pressed="true">
             <span class="role-icon">⌂</span><strong>Proprietário</strong>
@@ -30,6 +30,10 @@
             <small>Agenda, aulas e alunos atribuídos.</small>
           </button>
         </div>
+        <div class="login-flow" aria-label="Tipo de acesso">
+          <button type="button" class="flow-choice selected" data-flow="signup" aria-pressed="true">Primeiro acesso</button>
+          <button type="button" class="flow-choice" data-flow="login" aria-pressed="false">Já tenho conta</button>
+        </div>
         <form id="authForm">
           <div id="ownerFields">
             <label class="login-field">Seu nome
@@ -38,19 +42,20 @@
             <label class="login-field">Nome da escola
               <input id="schoolName" type="text" placeholder="Ex.: Escola de Surf Maré">
             </label>
-            <p class="note">Preencha os dois campos para criar a primeira conta de proprietário. Se já tem uma conta, deixe-os vazios e entre normalmente.</p>
+            <p class="note" id="signupOnlyNote">Informe seu nome e o nome da escola. Depois, confirme seu e-mail para ativar a conta.</p>
           </div>
           <label class="login-field">E-mail
             <input id="email" type="email" placeholder="seuemail@exemplo.com" autocomplete="username" required>
           </label>
           <label class="login-field">Senha
-            <input id="password" type="password" placeholder="Mínimo de 6 caracteres" autocomplete="current-password" minlength="6" required>
+            <input id="password" type="password" placeholder="Crie uma senha com 8 caracteres ou mais" autocomplete="new-password" minlength="8" required>
           </label>
           <button class="login-submit" id="authSubmit" type="submit">Entrar / criar conta</button>
         </form>
+        <p class="note" id="loginOnlyNote" hidden>Use o e-mail e a senha que você cadastrou anteriormente.</p>
         <p id="authStatus" class="auth-status" role="status" aria-live="polite" hidden></p>
         <button id="signOut" class="login-signout" type="button">Sair da conta neste aparelho</button>
-        <p class="login-foot">O acesso de professor exige uma conta previamente vinculada à escola. O convite e o gerenciamento da equipe serão habilitados na próxima etapa.</p>
+        <p class="login-foot">O cadastro inicial é feito pelo proprietário. Professores entram depois de receber um convite da escola.</p>
       </section>
       <a class="login-back" href="./index.html">← Voltar ao painel atual</a>
     </div>
