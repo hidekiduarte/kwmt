@@ -64,8 +64,13 @@
         const fullName = $("ownerName").value.trim();
         const schoolName = $("schoolName").value.trim();
         result = await supabaseClient.auth.signUp({
-          email, password,
-          options: { data: { full_name: fullName } }
+          email,
+          password,
+          options: {
+            data: { full_name: fullName },
+            // Retorna para a própria tela de acesso do KWMT após confirmar o e-mail.
+            emailRedirectTo: window.location.href.split("#")[0]
+          }
         });
         if (result.error) throw result.error;
         if (result.data.session) {
