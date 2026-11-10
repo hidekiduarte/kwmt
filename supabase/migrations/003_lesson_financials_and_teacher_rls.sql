@@ -68,6 +68,83 @@ using (
   or public.is_assigned_teacher(id)
 );
 
+-- 3A) O pacote deve estar ativo também no momento de vincular uma aula agendada.
+-- O lock serializa a alocação com cancelamentos e outras operações do pacote.
+create or replace function public.validate_scheduled_lesson_package()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  v_package_status text;
+  v_package_expires_at timestamptz;
+  v_package_student_id uuid;
+begin
+  if new.status <> 'scheduled' or new.student_package_id is null then
+    return new;
+  end if;
+
+  select sp.status, sp.expires_at, sp.student_id
+    into v_package_status, v_package_expires_at, v_package_student_id
+  from public.student_packages sp
+  where sp.school_id = new.school_id
+    and sp.id = new.student_package_id
+  for update;
+
+  if not found then
+    raise exception 'Student package not found for this school';
+  end if;
+
+  if v_package_student_id is distinct from new.student_id then
+    raise exception 'Student package does not belong to the lesson student';
+  end if;
+
+  if v_package_status is distinct from 'active' then
+    raise exception 'Cannot schedule a lesson with a cancelled, expired or completed package';
+  end if;
+
+  if v_package_expires_at is not null and v_package_expires_at <= now() then
+    raise exception 'Cannot schedule a lesson with an expired package';
+  end if;
+
+  return new;
+end;
+$;
+
+revoke all on function public.validate_scheduled_lesson_package() from public, anon, authenticated;
+drop trigger if exists trg_validate_scheduled_lesson_package on public.lessons;
+create trigger trg_validate_scheduled_lesson_package
+before insert or update of school_id, student_id, student_package_id, status on public.lessons
+for each row execute function public.validate_scheduled_lesson_package();
+
+-- 3B) Estados terminais não podem voltar a active; completed exige todos os créditos.
+create or replace function public.validate_student_package_lifecycle()
+returns trigger
+language plpgsql
+set search_path = ''
+as $
+begin
+  if old.status in ('completed','expired','cancelled')
+     and new.status is distinct from old.status then
+    raise exception 'A terminal package status cannot be reactivated or changed';
+  end if;
+
+  if new.status = 'completed'
+     and new.lessons_used <> new.lessons_purchased then
+    raise exception 'A package can only be completed after all lessons are consumed';
+  end if;
+
+  return new;
+end;
+$;
+
+revoke all on function public.validate_student_package_lifecycle() from public, anon, authenticated;
+drop trigger if exists trg_validate_student_package_lifecycle on public.student_packages;
+create trigger trg_validate_student_package_lifecycle
+before update of status, lessons_used on public.student_packages
+for each row execute function public.validate_student_package_lifecycle();
+
 -- 4) Ao concluir, validar presença e gerar a fotografia financeira uma única vez.
 -- Pacotes reconhecem o valor contratado proporcional por crédito, independentemente
 -- do valor já recebido. O caixa recebido será controlado separadamente na migration 004.
