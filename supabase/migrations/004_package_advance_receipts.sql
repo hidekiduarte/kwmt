@@ -317,9 +317,10 @@ left join (
   left join (
     select package_receipt_id, sum(amount) as refunded_amount
     from public.package_receipt_refunds
-    where school_id = pr.school_id
-    group by package_receipt_id
-  ) refunds on refunds.package_receipt_id = pr.id
+    group by school_id, package_receipt_id
+  ) refunds
+    on refunds.school_id = pr.school_id
+   and refunds.package_receipt_id = pr.id
   where pr.status = 'received'
   group by pr.school_id, pr.student_package_id
 ) receipts
