@@ -112,7 +112,7 @@ begin
   end if;
 
   if new.student_package_id is not null then
-    select sp.price_paid, sp.lessons_purchased, sp.lessons_used,
+    select sp.contracted_amount, sp.lessons_purchased, sp.lessons_used,
            sp.status, sp.expires_at, sp.student_id
       into v_package_price, v_lessons_purchased, v_lessons_used,
            v_package_status, v_package_expires_at, v_package_student_id
