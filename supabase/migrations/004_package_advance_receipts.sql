@@ -1,18 +1,17 @@
--- KWMT migration 004: recebimentos, reembolsos rastreáveis e limite de dívida
--- Pré-requisito: migrations 001, 002 e 003 revisadas e aplicadas em ambiente de teste.
--- contracted_amount representa a venda; package_receipts representa somente caixa recebido.
+-- KWMT migration 004: caixa append-only, reembolsos, anulacoes e limite de divida.
+-- Pre-requisito: migrations 001, 002 e 003 revisadas.
+-- contracted_amount = valor acordado; receipts/refunds/voids = movimentacoes reais de caixa.
 
--- 1) Limite máximo de saldo devedor permitido por pacote antes de consumir créditos.
--- Padrão 0 é deliberadamente conservador: exige quitação. A interface deve informar
--- que pagamentos parciais só liberam consumo após o proprietário configurar tolerância.
+-- 1) Limite maximo de saldo devedor permitido para consumir creditos.
+-- Zero exige quitacao. A interface deve explicar que pagamento parcial exige configuracao.
 alter table public.schools
   add column if not exists package_debt_limit numeric(10,2) not null default 0
   check (package_debt_limit >= 0);
 
 comment on column public.schools.package_debt_limit is
-  'Saldo devedor máximo permitido por pacote para consumir créditos. Zero exige quitação; pagamentos parciais exigem configuração explícita pelo proprietário.';
+  'Saldo devedor maximo permitido por pacote para consumir creditos. Zero exige quitacao.';
 
--- 2) Cada entrada de caixa é um recebimento independente.
+-- 2) Recebimentos sao eventos imutaveis. Anulacoes e reembolsos ficam em tabelas proprias.
 create table if not exists public.package_receipts (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
@@ -20,37 +19,71 @@ create table if not exists public.package_receipts (
   amount numeric(10,2) not null check (amount > 0),
   payment_method text not null
     check (payment_method in ('cash','pix','credit_card','debit_card','bank_transfer','other')),
-  status text not null default 'received'
-    check (status in ('received','void')),
   received_at timestamptz not null default now(),
   reference text,
   notes text,
   received_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
   foreign key (school_id, student_package_id)
-    references public.student_packages(school_id, id) on delete cascade
+    references public.student_packages(school_id, id) on delete cascade,
+  unique (school_id, id, student_package_id)
 );
 
 create index if not exists idx_package_receipts_package_date
   on public.package_receipts(school_id, student_package_id, received_at);
 
 alter table public.package_receipts enable row level security;
-
 drop policy if exists "owners manage package receipts" on public.package_receipts;
-create policy "owners manage package receipts"
-on public.package_receipts
-for all to authenticated
-using (public.is_school_owner(school_id))
+drop policy if exists "owners read package receipts" on public.package_receipts;
+drop policy if exists "owners record package receipts" on public.package_receipts;
+create policy "owners read package receipts"
+on public.package_receipts for select to authenticated
+using (public.is_school_owner(school_id));
+create policy "owners record package receipts"
+on public.package_receipts for insert to authenticated
 with check (public.is_school_owner(school_id));
 
-revoke all on public.package_receipts from anon;
-grant select, insert, update, delete on public.package_receipts to authenticated;
+revoke all on public.package_receipts from anon, authenticated;
+grant select, insert on public.package_receipts to authenticated;
 
--- 3) Histórico append-only de reembolsos. Cada estorno é um evento individual,
--- preservando valor, data, motivo, meio e usuário que registrou a movimentação.
+-- Defesa em profundidade: mesmo que privilegios sejam alterados no futuro,
+-- UPDATE/DELETE de recebimentos continuam proibidos.
+create or replace function public.reject_package_receipt_mutation()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  raise exception 'Package receipts are immutable; record a refund or void event instead';
+end;
+$$;
+
+drop trigger if exists trg_package_receipts_immutable on public.package_receipts;
+create trigger trg_package_receipts_immutable
+before update or delete on public.package_receipts
+for each row execute function public.reject_package_receipt_mutation();
+revoke all on function public.reject_package_receipt_mutation() from public, anon, authenticated;
+
+-- 3) Anulacao e reembolso sao eventos append-only distintos.
+create table if not exists public.package_receipt_voids (
+  id uuid primary key default gen_random_uuid(),
+  school_id uuid not null references public.schools(id) on delete cascade,
+  student_package_id uuid not null,
+  package_receipt_id uuid not null,
+  reason text not null,
+  voided_at timestamptz not null default now(),
+  recorded_by uuid references auth.users(id),
+  created_at timestamptz not null default now(),
+  foreign key (school_id, package_receipt_id, student_package_id)
+    references public.package_receipts(school_id, id, student_package_id) on delete cascade,
+  unique (school_id, package_receipt_id)
+);
+
 create table if not exists public.package_receipt_refunds (
   id uuid primary key default gen_random_uuid(),
   school_id uuid not null references public.schools(id) on delete cascade,
+  student_package_id uuid not null,
   package_receipt_id uuid not null,
   amount numeric(10,2) not null check (amount > 0),
   payment_method text not null
@@ -59,34 +92,85 @@ create table if not exists public.package_receipt_refunds (
   reason text not null,
   recorded_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
-  foreign key (school_id, package_receipt_id)
-    references public.package_receipts(school_id, id) on delete cascade
+  foreign key (school_id, package_receipt_id, student_package_id)
+    references public.package_receipts(school_id, id, student_package_id) on delete cascade
 );
 
+create index if not exists idx_package_receipt_voids_package
+  on public.package_receipt_voids(school_id, student_package_id);
 create index if not exists idx_package_receipt_refunds_receipt_date
   on public.package_receipt_refunds(school_id, package_receipt_id, refunded_at);
 
+alter table public.package_receipt_voids enable row level security;
 alter table public.package_receipt_refunds enable row level security;
+
+drop policy if exists "owners read package receipt voids" on public.package_receipt_voids;
+create policy "owners read package receipt voids"
+on public.package_receipt_voids for select to authenticated
+using (public.is_school_owner(school_id));
+drop policy if exists "owners record package receipt voids" on public.package_receipt_voids;
+create policy "owners record package receipt voids"
+on public.package_receipt_voids for insert to authenticated
+with check (public.is_school_owner(school_id));
 
 drop policy if exists "owners read package receipt refunds" on public.package_receipt_refunds;
 create policy "owners read package receipt refunds"
-on public.package_receipt_refunds
-for select to authenticated
+on public.package_receipt_refunds for select to authenticated
 using (public.is_school_owner(school_id));
-
 drop policy if exists "owners record package receipt refunds" on public.package_receipt_refunds;
 create policy "owners record package receipt refunds"
-on public.package_receipt_refunds
-for insert to authenticated
+on public.package_receipt_refunds for insert to authenticated
 with check (public.is_school_owner(school_id));
 
-revoke all on public.package_receipt_refunds from anon, authenticated;
-grant select, insert on public.package_receipt_refunds to authenticated;
--- Sem UPDATE/DELETE: correções devem ser registradas como novos eventos compensatórios.
+revoke all on public.package_receipt_voids, public.package_receipt_refunds from anon, authenticated;
+grant select, insert on public.package_receipt_voids, public.package_receipt_refunds to authenticated;
+-- Nenhuma permissao UPDATE/DELETE: eventos de caixa sao append-only.
 
--- 4) Valida que recebimentos líquidos nunca ultrapassem o valor contratado.
--- O lock do pacote serializa recebimentos e reembolsos relativos ao mesmo pacote.
-create or replace function public.validate_package_receipt_total()
+-- 4) Fonte unica da verdade para saldo devedor. SECURITY INVOKER faz a funcao
+-- respeitar RLS do chamador; os gatilhos SECURITY DEFINER tambem a utilizam
+-- depois de adquirir o lock do pacote.
+create or replace function public.package_outstanding_amount(
+  target_school_id uuid,
+  target_student_package_id uuid
+)
+returns numeric(10,2)
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select greatest(
+    sp.contracted_amount - coalesce((
+      select sum(pr.amount - coalesce(refunds.refunded_amount, 0))
+      from public.package_receipts pr
+      left join (
+        select package_receipt_id, sum(amount) as refunded_amount
+        from public.package_receipt_refunds
+        where school_id = target_school_id
+        group by package_receipt_id
+      ) refunds on refunds.package_receipt_id = pr.id
+      where pr.school_id = target_school_id
+        and pr.student_package_id = target_student_package_id
+        and not exists (
+          select 1
+          from public.package_receipt_voids pv
+          where pv.school_id = pr.school_id
+            and pv.package_receipt_id = pr.id
+        )
+    ), 0),
+    0
+  )::numeric(10,2)
+  from public.student_packages sp
+  where sp.school_id = target_school_id
+    and sp.id = target_student_package_id;
+$$;
+
+revoke all on function public.package_outstanding_amount(uuid, uuid) from public, anon;
+grant execute on function public.package_outstanding_amount(uuid, uuid) to authenticated;
+
+-- 5) Todos os caminhos de escrita adquirem primeiro o mesmo lock da linha do pacote.
+-- Recebimentos concorrentes sao serializados antes de calcular o saldo existente.
+create or replace function public.validate_package_receipt_insert()
 returns trigger
 language plpgsql
 security definer
@@ -94,9 +178,7 @@ set search_path = ''
 as $$
 declare
   v_contracted_amount numeric(10,2);
-  v_existing_net numeric(10,2);
-  v_refunded_for_receipt numeric(10,2);
-  v_new_net numeric(10,2);
+  v_outstanding numeric(10,2);
 begin
   select sp.contracted_amount
     into v_contracted_amount
@@ -109,44 +191,9 @@ begin
     raise exception 'Student package not found for receipt';
   end if;
 
-  select coalesce(sum(prf.amount), 0)
-    into v_refunded_for_receipt
-  from public.package_receipt_refunds prf
-  where prf.school_id = new.school_id
-    and prf.package_receipt_id = new.id;
+  v_outstanding := public.package_outstanding_amount(new.school_id, new.student_package_id);
 
-  if v_refunded_for_receipt > new.amount then
-    raise exception 'Receipt amount cannot be lower than its recorded refunds';
-  end if;
-
-  if new.status = 'void' and v_refunded_for_receipt > 0 then
-    raise exception 'A receipt with recorded refunds cannot be voided; register a compensating event';
-  end if;
-
-  select coalesce(sum(
-    case when pr.status = 'received'
-      then pr.amount - coalesce(refunds.refunded_amount, 0)
-      else 0
-    end
-  ), 0)
-    into v_existing_net
-  from public.package_receipts pr
-  left join (
-    select package_receipt_id, sum(amount) as refunded_amount
-    from public.package_receipt_refunds
-    where school_id = new.school_id
-    group by package_receipt_id
-  ) refunds on refunds.package_receipt_id = pr.id
-  where pr.school_id = new.school_id
-    and pr.student_package_id = new.student_package_id
-    and pr.id <> new.id;
-
-  v_new_net := case
-    when new.status = 'received' then new.amount - v_refunded_for_receipt
-    else 0
-  end;
-
-  if v_existing_net + v_new_net > v_contracted_amount then
+  if (v_contracted_amount - v_outstanding) + new.amount > v_contracted_amount then
     raise exception 'Net package receipts cannot exceed the contracted package amount';
   end if;
 
@@ -155,14 +202,14 @@ end;
 $$;
 
 drop trigger if exists trg_validate_package_receipt_total on public.package_receipts;
-create trigger trg_validate_package_receipt_total
-before insert or update on public.package_receipts
-for each row execute function public.validate_package_receipt_total();
+drop trigger if exists trg_validate_package_receipt_insert on public.package_receipts;
+create trigger trg_validate_package_receipt_insert
+before insert on public.package_receipts
+for each row execute function public.validate_package_receipt_insert();
+revoke all on function public.validate_package_receipt_insert() from public, anon, authenticated;
 
-revoke all on function public.validate_package_receipt_total() from public, anon, authenticated;
-
--- 5) Valida cada reembolso contra o saldo ainda reembolsável do recebimento.
--- O lock do pacote evita corrida com outros recebimentos/reembolsos do mesmo pacote.
+-- 6) Reembolso: primeiro identifica o pacote, depois trava o pacote e somente
+-- entao relê o recebimento e soma reembolsos, evitando validar estado obsoleto.
 create or replace function public.validate_package_receipt_refund()
 returns trigger
 language plpgsql
@@ -170,13 +217,12 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_receipt_amount numeric(10,2);
-  v_receipt_status text;
   v_package_id uuid;
+  v_receipt_amount numeric(10,2);
   v_existing_refunds numeric(10,2);
 begin
-  select pr.amount, pr.status, pr.student_package_id
-    into v_receipt_amount, v_receipt_status, v_package_id
+  select pr.student_package_id
+    into v_package_id
   from public.package_receipts pr
   where pr.school_id = new.school_id
     and pr.id = new.package_receipt_id;
@@ -191,9 +237,34 @@ begin
     and sp.id = v_package_id
   for update;
 
-  if v_receipt_status <> 'received' then
-    raise exception 'Only received payments can be refunded';
+  if not found then
+    raise exception 'Student package not found for refund';
   end if;
+
+  -- Releitura ocorre depois do lock comum do pacote.
+  perform 1
+  from public.package_receipts pr
+  where pr.school_id = new.school_id
+    and pr.id = new.package_receipt_id
+    and pr.student_package_id = v_package_id;
+
+  if not found then
+    raise exception 'Package receipt changed or not found';
+  end if;
+
+  if exists (
+    select 1 from public.package_receipt_voids pv
+    where pv.school_id = new.school_id
+      and pv.package_receipt_id = new.package_receipt_id
+  ) then
+    raise exception 'Voided receipts cannot be refunded';
+  end if;
+
+  select pr.amount
+    into v_receipt_amount
+  from public.package_receipts pr
+  where pr.school_id = new.school_id
+    and pr.id = new.package_receipt_id;
 
   select coalesce(sum(prf.amount), 0)
     into v_existing_refunds
@@ -213,10 +284,74 @@ drop trigger if exists trg_validate_package_receipt_refund on public.package_rec
 create trigger trg_validate_package_receipt_refund
 before insert on public.package_receipt_refunds
 for each row execute function public.validate_package_receipt_refund();
-
 revoke all on function public.validate_package_receipt_refund() from public, anon, authenticated;
 
--- 6) Impede consumo de crédito quando a dívida do pacote excede o limite da escola.
+-- 7) Anulacao integral: adquire lock do pacote antes de verificar reembolsos
+-- e grava evento unico; nao altera nem apaga o recebimento original.
+create or replace function public.validate_package_receipt_void()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_package_id uuid;
+  v_receipt_amount numeric(10,2);
+  v_existing_refunds numeric(10,2);
+begin
+  select pr.student_package_id
+    into v_package_id
+  from public.package_receipts pr
+  where pr.school_id = new.school_id
+    and pr.id = new.package_receipt_id;
+
+  if not found or v_package_id <> new.student_package_id then
+    raise exception 'Package receipt not found for void';
+  end if;
+
+  perform 1
+  from public.student_packages sp
+  where sp.school_id = new.school_id
+    and sp.id = v_package_id
+  for update;
+
+  if not found then
+    raise exception 'Student package not found for void';
+  end if;
+
+  select pr.amount
+    into v_receipt_amount
+  from public.package_receipts pr
+  where pr.school_id = new.school_id
+    and pr.id = new.package_receipt_id
+    and pr.student_package_id = v_package_id;
+
+  if not found then
+    raise exception 'Package receipt not found after package lock';
+  end if;
+
+  select coalesce(sum(prf.amount), 0)
+    into v_existing_refunds
+  from public.package_receipt_refunds prf
+  where prf.school_id = new.school_id
+    and prf.package_receipt_id = new.package_receipt_id;
+
+  if v_existing_refunds > 0 then
+    raise exception 'A receipt with refunds cannot be voided; register remaining refund events instead';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_validate_package_receipt_void on public.package_receipt_voids;
+create trigger trg_validate_package_receipt_void
+before insert on public.package_receipt_voids
+for each row execute function public.validate_package_receipt_void();
+revoke all on function public.validate_package_receipt_void() from public, anon, authenticated;
+
+-- 8) Bloqueia conclusao quando a divida ultrapassa o limite. Primeiro trava pacote;
+-- em seguida consulta a mesma funcao usada pela view administrativa.
 create or replace function public.guard_package_debt_before_lesson_completion()
 returns trigger
 language plpgsql
@@ -224,9 +359,7 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_contracted_amount numeric(10,2);
   v_school_limit numeric(10,2);
-  v_received_net numeric(10,2);
   v_outstanding numeric(10,2);
 begin
   if old.status = 'completed' or new.status <> 'completed'
@@ -238,11 +371,10 @@ begin
     raise exception 'Cancelled lessons cannot be completed';
   end if;
 
-  select sp.contracted_amount
-    into v_contracted_amount
+  perform 1
   from public.student_packages sp
-  where sp.id = new.student_package_id
-    and sp.school_id = new.school_id
+  where sp.school_id = new.school_id
+    and sp.id = new.student_package_id
   for update;
 
   if not found then
@@ -254,20 +386,7 @@ begin
   from public.schools s
   where s.id = new.school_id;
 
-  select coalesce(sum(pr.amount - coalesce(refunds.refunded_amount, 0)), 0)
-    into v_received_net
-  from public.package_receipts pr
-  left join (
-    select package_receipt_id, sum(amount) as refunded_amount
-    from public.package_receipt_refunds
-    where school_id = new.school_id
-    group by package_receipt_id
-  ) refunds on refunds.package_receipt_id = pr.id
-  where pr.school_id = new.school_id
-    and pr.student_package_id = new.student_package_id
-    and pr.status = 'received';
-
-  v_outstanding := greatest(v_contracted_amount - v_received_net, 0);
+  v_outstanding := public.package_outstanding_amount(new.school_id, new.student_package_id);
 
   if v_outstanding > v_school_limit then
     raise exception 'Package debt exceeds the school configured limit. Outstanding: %, allowed: %',
@@ -284,10 +403,9 @@ before update of status on public.lessons
 for each row
 when (old.status is distinct from 'completed' and new.status = 'completed')
 execute function public.guard_package_debt_before_lesson_completion();
-
 revoke all on function public.guard_package_debt_before_lesson_completion() from public, anon, authenticated;
 
--- 7) Visão administrativa: contratado, recebido líquido, dívida e créditos restantes.
+-- 9) View e gatilho usam a mesma funcao para o saldo devedor.
 create or replace view public.owner_student_package_balances
 with (security_invoker = true)
 as
@@ -297,37 +415,19 @@ select
   sp.student_id,
   sp.package_offer_id,
   sp.contracted_amount,
-  coalesce(receipts.received_amount, 0)::numeric(10,2) as received_amount,
-  greatest(
-    sp.contracted_amount - coalesce(receipts.received_amount, 0),
-    0
-  )::numeric(10,2) as outstanding_amount,
+  (sp.contracted_amount - public.package_outstanding_amount(sp.school_id, sp.id))::numeric(10,2)
+    as received_amount,
+  public.package_outstanding_amount(sp.school_id, sp.id)::numeric(10,2)
+    as outstanding_amount,
   sp.lessons_purchased,
   sp.lessons_used,
   (sp.lessons_purchased - sp.lessons_used) as lessons_remaining,
   sp.status,
   sp.expires_at
-from public.student_packages sp
-left join (
-  select
-    pr.school_id,
-    pr.student_package_id,
-    sum(pr.amount - coalesce(refunds.refunded_amount, 0)) as received_amount
-  from public.package_receipts pr
-  left join (
-    select package_receipt_id, sum(amount) as refunded_amount
-    from public.package_receipt_refunds
-    group by school_id, package_receipt_id
-  ) refunds
-    on refunds.school_id = pr.school_id
-   and refunds.package_receipt_id = pr.id
-  where pr.status = 'received'
-  group by pr.school_id, pr.student_package_id
-) receipts
-  on receipts.school_id = sp.school_id
- and receipts.student_package_id = sp.id;
+from public.student_packages sp;
 
 revoke all on public.owner_student_package_balances from public, anon;
 grant select on public.owner_student_package_balances to authenticated;
 
--- A view respeita RLS owner-only das tabelas-base (security_invoker).
+-- Eventos financeiros sao append-only. Exclusao em cascata ocorre apenas no ciclo
+-- de vida administrativo da escola/pacote, nunca por permissao direta do cliente.
