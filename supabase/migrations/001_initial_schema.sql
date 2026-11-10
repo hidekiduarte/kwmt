@@ -511,8 +511,7 @@ revoke all on function public.write_kwmt_audit_log() from public, anon;
 grant execute on function public.is_school_member(uuid) to authenticated;
 grant execute on function public.is_school_owner(uuid) to authenticated;
 grant execute on function public.is_assigned_teacher(uuid) to authenticated;
-grant execute on function public.create_school(text, text) to authenticated;
-grant execute on function public.confirm_lesson_attendance(uuid) to authenticated;
+
 
 alter table public.profiles enable row level security;
 alter table public.schools enable row level security;
