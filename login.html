@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#14243a">
+  <meta name="description" content="Acesso seguro à plataforma KWMT">
+  <link rel="stylesheet" href="styles.css">
+  <title>Entrar — KWMT</title>
+</head>
+<body>
+  <main class="login-page">
+    <div class="login-shell">
+      <div class="login-brand">
+        <img src="kwmt-wave.png" alt="Símbolo KWMT">
+        <div><strong>KWMT</strong><small>GESTÃO INTELIGENTE</small></div>
+      </div>
+      <section class="login-card">
+        <p class="eyebrow">ようこそ · BEM-VINDO</p>
+        <h1 id="authTitle">Acesse sua escola.</h1>
+        <p class="login-intro" id="authDescription">Entre ou crie a conta responsável pela gestão da escola.</p>
+        <p class="eyebrow">ESCOLHA SEU ACESSO</p>
+        <div class="login-roles">
+          <button class="login-role selected" type="button" data-role="owner" aria-pressed="true">
+            <span class="role-icon">⌂</span><strong>Proprietário</strong>
+            <small>Gestão da escola, equipe e financeiro.</small>
+          </button>
+          <button class="login-role" type="button" data-role="teacher" aria-pressed="false">
+            <span class="role-icon">波</span><strong>Professor</strong>
+            <small>Agenda, aulas e alunos atribuídos.</small>
+          </button>
+        </div>
+        <form id="authForm">
+          <div id="ownerFields">
+            <label class="login-field">Seu nome
+              <input id="ownerName" type="text" placeholder="Nome completo" autocomplete="name">
+            </label>
+            <label class="login-field">Nome da escola
+              <input id="schoolName" type="text" placeholder="Ex.: Escola de Surf Maré">
+            </label>
+            <p class="note">Preencha os dois campos para criar a primeira conta de proprietário. Se já tem uma conta, deixe-os vazios e entre normalmente.</p>
+          </div>
+          <label class="login-field">E-mail
+            <input id="email" type="email" placeholder="seuemail@exemplo.com" autocomplete="username" required>
+          </label>
+          <label class="login-field">Senha
+            <input id="password" type="password" placeholder="Mínimo de 6 caracteres" autocomplete="current-password" minlength="6" required>
+          </label>
+          <button class="login-submit" id="authSubmit" type="submit">Entrar / criar conta</button>
+        </form>
+        <p id="authStatus" class="auth-status" role="status" aria-live="polite" hidden></p>
+        <button id="signOut" class="login-signout" type="button">Sair da conta neste aparelho</button>
+        <p class="login-foot">O acesso de professor exige uma conta previamente vinculada à escola. O convite e o gerenciamento da equipe serão habilitados na próxima etapa.</p>
+      </section>
+      <a class="login-back" href="./index.html">← Voltar ao painel atual</a>
+    </div>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./supabase-config.js"></script>
+  <script src="./auth.js"></script>
+</body>
+</html>
