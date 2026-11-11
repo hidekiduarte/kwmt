@@ -123,22 +123,21 @@ create policy "owner manages payout rules" on public.teacher_payout_rules
 
 drop policy if exists "owner reads lesson financial records" on public.lesson_financial_records;
 create policy "owner reads lesson financial records" on public.lesson_financial_records
-  for all to authenticated
-  using (public.is_school_owner(school_id))
-  with check (public.is_school_owner(school_id));
+  for select to authenticated
+  using (public.is_school_owner(school_id));
 
 revoke all on public.lesson_types, public.package_offers, public.student_packages,
   public.teacher_payout_rules, public.lesson_financial_records from anon;
 grant select, insert on public.lesson_types, public.package_offers,
-  public.student_packages, public.teacher_payout_rules, public.lesson_financial_records
-  to authenticated;
-grant update on public.lesson_types, public.package_offers,
-  public.teacher_payout_rules, public.lesson_financial_records to authenticated;
+  public.student_packages, public.teacher_payout_rules to authenticated;
+-- Registros financeiros são gravados exclusivamente pelo gatilho SECURITY DEFINER.
+-- Clientes autenticados podem consultar, mas não inserir, alterar ou excluir snapshots.
+grant select on public.lesson_financial_records to authenticated;
 -- O proprietário pode alterar o estado e a validade, mas não editar o contador
 -- de créditos; lessons_used só é incrementado pelo gatilho financeiro.
 grant update (status, expires_at) on public.student_packages to authenticated;
 grant delete on public.lesson_types, public.package_offers,
-  public.teacher_payout_rules, public.lesson_financial_records to authenticated;
+  public.teacher_payout_rules to authenticated;
 -- Pacotes vendidos não podem ser apagados fisicamente: preserve o histórico e
 -- use status = 'cancelled' para desativar um pacote sem destruir seus vínculos.
 
