@@ -86,6 +86,8 @@ create table if not exists public.lesson_financial_records (
 alter table public.lesson_financial_records
   drop constraint if exists lesson_financial_records_school_id_lesson_id_fkey;
 alter table public.lesson_financial_records
+  drop constraint if exists lesson_financial_records_school_lesson_fk;
+alter table public.lesson_financial_records
   add constraint lesson_financial_records_school_lesson_fk
   foreign key (school_id, lesson_id)
   references public.lessons(school_id, id)
