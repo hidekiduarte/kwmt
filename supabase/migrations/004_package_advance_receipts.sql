@@ -475,7 +475,7 @@ select
   sp.expires_at
 from public.student_packages sp;
 
-revoke all on public.owner_student_package_balances from public, anon;
+revoke all on public.owner_student_package_balances from public, anon, authenticated;
 grant select on public.owner_student_package_balances to authenticated;
 
 -- Eventos financeiros sao append-only. Exclusao em cascata ocorre apenas no ciclo
