@@ -166,6 +166,44 @@ create trigger trg_validate_student_package_lifecycle
 before insert or update of status, lessons_used on public.student_packages
 for each row execute function public.validate_student_package_lifecycle();
 
+-- 3C) Impede cancelar pacote enquanto houver aula futura/em andamento agendada.
+-- O proprietário deve cancelar ou reagendar explicitamente cada aula antes.
+create or replace function public.prevent_package_cancel_with_scheduled_lessons()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  v_scheduled_count integer;
+begin
+  if old.status is distinct from 'cancelled'
+     and new.status = 'cancelled' then
+    select count(*)::integer
+      into v_scheduled_count
+    from public.lessons l
+    where l.school_id = new.school_id
+      and l.student_package_id = new.id
+      and l.status = 'scheduled'
+      and l.ends_at > now();
+
+    if v_scheduled_count > 0 then
+      raise exception
+        'Cannot cancel package: % future or ongoing scheduled lesson(s) must be cancelled or rescheduled first',
+        v_scheduled_count;
+    end if;
+  end if;
+
+  return new;
+end;
+$;
+
+revoke all on function public.prevent_package_cancel_with_scheduled_lessons() from public, anon, authenticated;
+drop trigger if exists trg_prevent_package_cancel_with_scheduled_lessons on public.student_packages;
+create trigger trg_prevent_package_cancel_with_scheduled_lessons
+before update of status on public.student_packages
+for each row execute function public.prevent_package_cancel_with_scheduled_lessons();
+
 -- 4) Ao concluir, validar presença e gerar a fotografia financeira uma única vez.
 -- Pacotes reconhecem o valor contratado proporcional por crédito, independentemente
 -- do valor já recebido. O caixa recebido será controlado separadamente na migration 004.
