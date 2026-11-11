@@ -173,7 +173,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = ''
-as $
+as $$
 declare
   v_scheduled_count integer;
 begin
@@ -196,7 +196,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 revoke all on function public.prevent_package_cancel_with_scheduled_lessons() from public, anon, authenticated;
 drop trigger if exists trg_prevent_package_cancel_with_scheduled_lessons on public.student_packages;
