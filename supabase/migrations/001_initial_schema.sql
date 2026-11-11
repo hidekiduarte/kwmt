@@ -476,10 +476,10 @@ begin
   insert into public.audit_logs(school_id, actor_id, action, entity_table, entity_id)
   values (lesson_school, auth.uid(), 'attendance_confirmed', 'lessons', target_lesson::text);
 end;
-$;
+$$;
 
 end;
-$;
+$$;
 
 -- Only this authorized RPC may change lesson completion/attendance fields.
 create or replace function public.guard_lesson_attendance_fields()
@@ -503,7 +503,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 revoke all on function public.guard_lesson_attendance_fields() from public, anon, authenticated;
 drop trigger if exists trg_guard_lesson_attendance_fields on public.lessons;
