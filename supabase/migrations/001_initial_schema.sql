@@ -463,6 +463,10 @@ begin
     raise exception 'A lesson can only be confirmed after its scheduled end';
   end if;
 
+  -- Marca a autorização dentro desta transação. O trigger abaixo exige este
+  -- marcador para permitir alterações nos campos de confirmação.
+  perform pg_catalog.set_config('kwmt.confirm_lesson_attendance', target_lesson::text, true);
+
   update public.lessons
   set status = 'completed',
       attendance_confirmed_at = now(),
@@ -472,7 +476,41 @@ begin
   insert into public.audit_logs(school_id, actor_id, action, entity_table, entity_id)
   values (lesson_school, auth.uid(), 'attendance_confirmed', 'lessons', target_lesson::text);
 end;
-$$;
+$;
+
+end;
+$;
+
+-- Only this authorized RPC may change lesson completion/attendance fields.
+create or replace function public.guard_lesson_attendance_fields()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  v_authorized_lesson text;
+begin
+  if new.status is distinct from old.status
+     or new.attendance_confirmed_at is distinct from old.attendance_confirmed_at
+     or new.attendance_confirmed_by is distinct from old.attendance_confirmed_by then
+    v_authorized_lesson := pg_catalog.current_setting('kwmt.confirm_lesson_attendance', true);
+
+    if v_authorized_lesson is distinct from old.id::text then
+      raise exception 'Lesson completion and attendance fields can only be changed through confirm_lesson_attendance()';
+    end if;
+  end if;
+
+  return new;
+end;
+$;
+
+revoke all on function public.guard_lesson_attendance_fields() from public, anon, authenticated;
+drop trigger if exists trg_guard_lesson_attendance_fields on public.lessons;
+create trigger trg_guard_lesson_attendance_fields
+before update on public.lessons
+for each row execute function public.guard_lesson_attendance_fields();
+
 
 -- Automatically record owner-managed business data changes.
 drop trigger if exists trg_audit_students on public.students;
