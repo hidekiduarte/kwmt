@@ -144,8 +144,8 @@
 
     if (packageError) fail(friendlyError(packageError), packageError);
     if (!pkg || pkg.status !== "active") fail("O pacote não está ativo ou não pertence a este aluno.");
-    if (pkg.expires_at && new Date(pkg.expires_at).getTime() <= Date.now()) {
-      fail("Este pacote está vencido. Selecione outro pacote válido.");
+    if (pkg.expires_at && new Date(endsAt).getTime() > new Date(pkg.expires_at).getTime()) {
+      fail("A aula termina depois da validade do pacote. Escolha outro horário ou pacote.");
     }
     if (pkg.lessons_used >= pkg.lessons_purchased) fail("Este pacote não tem aulas disponíveis.");
 
@@ -178,11 +178,95 @@
   }
 
   window.KWMTLessons = Object.freeze({
-    loadStudents,
-    loadActiveTeachers,
-    loadActivePackages,
-    schedulePackageLesson,
-    confirmAttendance,
-    friendlyError
+    loadStudents, loadActiveTeachers, loadActivePackages,
+    schedulePackageLesson, confirmAttendance, friendlyError
   });
+
+  // Liga o módulo ao formulário da Escolinha sem alterar as aulas particulares.
+  const byId = id => document.getElementById(id);
+  const option = (value, label) => {
+    const el = document.createElement("option");
+    el.value = value; el.textContent = label; return el;
+  };
+  async function connectSchoolForm() {
+    const form = byId("schoolLessonForm");
+    const studentSelect = byId("schoolStudent");
+    const packageSelect = byId("schoolPackage");
+    const teacherSelect = byId("teacher");
+    if (!form || !studentSelect || !packageSelect || !teacherSelect) return;
+
+    const setOptions = (select, placeholder, rows, labelFn) => {
+      select.replaceChildren(option("", placeholder));
+      rows.forEach(row => select.append(option(row.id, labelFn(row))));
+    };
+
+    try {
+      const [students, teachers] = await Promise.all([loadStudents(), loadActiveTeachers()]);
+      setOptions(studentSelect, "Selecione o aluno", students, x => x.name);
+      setOptions(teacherSelect, "Selecione o professor", teachers, x => x.name);
+      setOptions(packageSelect, "Selecione primeiro o aluno", [], () => "");
+    } catch (error) {
+      console.error("[KWMT] Falha ao carregar selects:", error);
+      if (byId("toast")) {
+        byId("toast").textContent = error.message;
+        byId("toast").style.display = "block";
+      }
+    }
+
+    studentSelect.addEventListener("change", async () => {
+      packageSelect.disabled = true;
+      setOptions(packageSelect, "Carregando pacotes...", [], () => "");
+      try {
+        const packages = await loadActivePackages(studentSelect.value);
+        packageSelect.replaceChildren(option("", packages.length ? "Selecione o pacote" : "Nenhum pacote válido disponível"));
+        packages.forEach(pkg => {
+          const name = pkg.package_offers?.name || "Pacote";
+          const remaining = Number(pkg.lessons_purchased) - Number(pkg.lessons_used || 0);
+          packageSelect.append(option(pkg.id, `${name} · ${remaining} aula(s) restantes`));
+        });
+      } catch (error) {
+        packageSelect.replaceChildren(option("", error.message));
+      } finally {
+        packageSelect.disabled = false;
+      }
+    });
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"],button:not([type])');
+      if (submit) { submit.disabled = true; submit.textContent = "Agendando..."; }
+      try {
+        const lesson = await schedulePackageLesson({
+          studentId: studentSelect.value,
+          teacherId: teacherSelect.value,
+          packageId: packageSelect.value,
+          date: byId("schoolDate").value,
+          time: byId("schoolTime").value,
+          durationMinutes: 60
+        });
+        if (byId("toast")) {
+          byId("toast").textContent = "Aula agendada com sucesso no Supabase.";
+          byId("toast").style.display = "block";
+        }
+        form.reset();
+        byId("schoolDate").value = new Date().toLocaleDateString("en-CA");
+        packageSelect.replaceChildren(option("", "Selecione primeiro o aluno"));
+      } catch (error) {
+        const message = friendlyError(error);
+        console.error("[KWMT] Agendamento recusado:", error.cause || error);
+        if (byId("toast")) {
+          byId("toast").textContent = message;
+          byId("toast").style.display = "block";
+        } else { alert(message); }
+      } finally {
+        if (submit) { submit.disabled = false; submit.textContent = "Agendar aula de 1 hora"; }
+      }
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", connectSchoolForm, { once: true });
+  } else {
+    connectSchoolForm();
+  }
 })();
