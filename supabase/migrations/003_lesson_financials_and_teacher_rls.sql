@@ -75,7 +75,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = ''
-as $
+as $$
 declare
   v_package_status text;
   v_package_expires_at timestamptz;
@@ -110,7 +110,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 revoke all on function public.validate_scheduled_lesson_package() from public, anon, authenticated;
 drop trigger if exists trg_validate_scheduled_lesson_package on public.lessons;
@@ -228,7 +228,7 @@ begin
     end if;
 
     if v_package_status <> 'active'
-       or (v_package_expires_at is not null and v_package_expires_at < now()) then
+       or (v_package_expires_at is not null and v_package_expires_at <= now()) then
       raise exception 'Student package is not active or has expired';
     end if;
 
