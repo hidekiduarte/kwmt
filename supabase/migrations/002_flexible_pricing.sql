@@ -82,6 +82,15 @@ create table if not exists public.lesson_financial_records (
   foreign key (school_id, student_package_id) references public.student_packages(school_id, id)
 );
 
+-- Preserve financial snapshots: a lesson with a financial record cannot be hard-deleted.
+alter table public.lesson_financial_records
+  drop constraint if exists lesson_financial_records_school_id_lesson_id_fkey;
+alter table public.lesson_financial_records
+  add constraint lesson_financial_records_school_lesson_fk
+  foreign key (school_id, lesson_id)
+  references public.lessons(school_id, id)
+  on delete restrict;
+
 create index if not exists idx_lesson_types_school_active
   on public.lesson_types(school_id, active);
 create index if not exists idx_package_offers_school_active
