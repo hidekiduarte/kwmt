@@ -1,0 +1,43 @@
+name: KWMT - Preview seguro
+
+on:
+  push:
+    branches:
+      - redesign-japones
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Preparar pacote de testes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar código da branch de testes
+        uses: actions/checkout@v4
+
+      - name: Validar arquivos essenciais
+        run: |
+          test -f index.html
+          test -f login.html
+          test -f app.js
+          test -f auth.js
+          test -f supabase-config.js
+
+      - name: Gerar pacote para teste
+        uses: actions/upload-artifact@v4
+        with:
+          name: kwmt-preview-redesign-japones
+          path: |
+            index.html
+            login.html
+            app.js
+            auth.js
+            styles.css
+            supabase-config.js
+            manifest.json
+            sw.js
+            kwmt-wave.png
+          if-no-files-found: error
+          retention-days: 7
