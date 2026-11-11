@@ -34,6 +34,7 @@ jobs:
             login.html
             app.js
             auth.js
+            supabase-lessons.js
             styles.css
             supabase-config.js
             manifest.json
