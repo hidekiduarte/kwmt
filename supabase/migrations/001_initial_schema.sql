@@ -507,7 +507,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 revoke all on function public.guard_lesson_attendance_fields() from public, anon, authenticated;
 drop trigger if exists trg_guard_lesson_attendance_fields on public.lessons;
