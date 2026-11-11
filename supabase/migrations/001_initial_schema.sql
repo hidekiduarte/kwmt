@@ -478,9 +478,6 @@ begin
 end;
 $$;
 
-end;
-$$;
-
 -- Only this authorized RPC may change lesson completion/attendance fields.
 create or replace function public.guard_lesson_attendance_fields()
 returns trigger
@@ -491,7 +488,14 @@ as $
 declare
   v_authorized_lesson text;
 begin
-  if new.status is distinct from old.status
+  -- Uma aula concluída não pode ser reaberta nem ter seu status revertido.
+  if old.status = 'completed' and new.status is distinct from old.status then
+    raise exception 'Completed lessons cannot be reopened';
+  end if;
+
+  -- Cancelamentos administrativos continuam permitidos; concluir aula ou
+  -- alterar os campos de presença exige a RPC autorizada.
+  if (new.status = 'completed' and old.status is distinct from 'completed')
      or new.attendance_confirmed_at is distinct from old.attendance_confirmed_at
      or new.attendance_confirmed_by is distinct from old.attendance_confirmed_by then
     v_authorized_lesson := pg_catalog.current_setting('kwmt.confirm_lesson_attendance', true);
@@ -503,7 +507,7 @@ begin
 
   return new;
 end;
-$$;
+$;
 
 revoke all on function public.guard_lesson_attendance_fields() from public, anon, authenticated;
 drop trigger if exists trg_guard_lesson_attendance_fields on public.lessons;
