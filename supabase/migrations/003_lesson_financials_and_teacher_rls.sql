@@ -115,7 +115,7 @@ $$;
 revoke all on function public.validate_scheduled_lesson_package() from public, anon, authenticated;
 drop trigger if exists trg_validate_scheduled_lesson_package on public.lessons;
 create trigger trg_validate_scheduled_lesson_package
-before insert or update of school_id, student_id, student_package_id, status on public.lessons
+before insert or update of school_id, student_id, student_package_id, status, starts_at, ends_at on public.lessons
 for each row execute function public.validate_scheduled_lesson_package();
 
 -- 3B) Estados terminais não podem voltar a active; completed exige todos os créditos.
@@ -204,6 +204,44 @@ create trigger trg_prevent_package_cancel_with_scheduled_lessons
 before update of status on public.student_packages
 for each row execute function public.prevent_package_cancel_with_scheduled_lessons();
 
+-- 3D) Reduzir/definir validade não pode deixar aulas agendadas além do vencimento.
+-- Estender expires_at é permitido; reduzir exige resolver antes as aulas incompatíveis.
+create or replace function public.prevent_package_expiry_before_scheduled_lessons()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  v_conflicting_count integer;
+begin
+  if new.expires_at is distinct from old.expires_at
+     and new.expires_at is not null then
+    select count(*)::integer
+      into v_conflicting_count
+    from public.lessons l
+    where l.school_id = new.school_id
+      and l.student_package_id = new.id
+      and l.status = 'scheduled'
+      and l.ends_at > new.expires_at;
+
+    if v_conflicting_count > 0 then
+      raise exception
+        'Cannot shorten package validity: % scheduled lesson(s) end after the new expiration date',
+        v_conflicting_count;
+    end if;
+  end if;
+
+  return new;
+end;
+$;
+
+revoke all on function public.prevent_package_expiry_before_scheduled_lessons() from public, anon, authenticated;
+drop trigger if exists trg_prevent_package_expiry_before_scheduled_lessons on public.student_packages;
+create trigger trg_prevent_package_expiry_before_scheduled_lessons
+before update of expires_at on public.student_packages
+for each row execute function public.prevent_package_expiry_before_scheduled_lessons();
+
 -- 4) Ao concluir, validar presença e gerar a fotografia financeira uma única vez.
 -- Pacotes reconhecem o valor contratado proporcional por crédito, independentemente
 -- do valor já recebido. O caixa recebido será controlado separadamente na migration 004.
@@ -268,6 +306,10 @@ begin
     if v_package_status <> 'active'
        or (v_package_expires_at is not null and v_package_expires_at <= now()) then
       raise exception 'Student package is not active or has expired';
+    end if;
+
+    if v_package_expires_at is not null and new.ends_at > v_package_expires_at then
+      raise exception 'Lesson must end on or before the student package expiration date';
     end if;
 
     if v_lessons_used >= v_lessons_purchased then
