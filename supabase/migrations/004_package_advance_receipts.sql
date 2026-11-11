@@ -5,8 +5,23 @@
 -- 1) Limite maximo de saldo devedor permitido para consumir creditos.
 -- Zero exige quitacao. A interface deve explicar que pagamento parcial exige configuracao.
 alter table public.schools
-  add column if not exists package_debt_limit numeric(10,2) not null default 0
-  check (package_debt_limit >= 0);
+  add column if not exists package_debt_limit numeric(10,2) not null default 0;
+
+-- A restricao tem nome estavel e pode ser reaplicada sem duplicacao.
+do $
+begin
+  if not exists (
+    select 1
+    from pg_catalog.pg_constraint
+    where conrelid = 'public.schools'::regclass
+      and conname = 'schools_package_debt_limit_nonnegative'
+  ) then
+    alter table public.schools
+      add constraint schools_package_debt_limit_nonnegative
+      check (package_debt_limit >= 0);
+  end if;
+end;
+$;
 
 comment on column public.schools.package_debt_limit is
   'Saldo devedor maximo permitido por pacote para consumir creditos. Zero exige quitacao.';
@@ -85,6 +100,7 @@ begin
 end;
 $$;
 revoke all on function public.set_package_cash_event_actor() from public, anon, authenticated;
+drop trigger if exists trg_set_package_receipt_actor on public.package_receipts;
 create trigger trg_set_package_receipt_actor
 before insert on public.package_receipts
 for each row execute function public.set_package_cash_event_actor();
@@ -122,9 +138,11 @@ create table if not exists public.package_receipt_refunds (
 
 create index if not exists idx_package_receipt_voids_package
   on public.package_receipt_voids(school_id, student_package_id);
+drop trigger if exists trg_set_package_receipt_void_actor on public.package_receipt_voids;
 create trigger trg_set_package_receipt_void_actor
 before insert on public.package_receipt_voids
 for each row execute function public.set_package_cash_event_actor();
+drop trigger if exists trg_set_package_receipt_refund_actor on public.package_receipt_refunds;
 create trigger trg_set_package_receipt_refund_actor
 before insert on public.package_receipt_refunds
 for each row execute function public.set_package_cash_event_actor();
