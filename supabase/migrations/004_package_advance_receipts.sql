@@ -8,7 +8,7 @@ alter table public.schools
   add column if not exists package_debt_limit numeric(10,2) not null default 0;
 
 -- A restricao tem nome estavel e pode ser reaplicada sem duplicacao.
-do $
+do $kwmt$
 begin
   if not exists (
     select 1
@@ -21,7 +21,7 @@ begin
       check (package_debt_limit >= 0);
   end if;
 end;
-$;
+$kwmt$;
 
 comment on column public.schools.package_debt_limit is
   'Saldo devedor maximo permitido por pacote para consumir creditos. Zero exige quitacao.';
