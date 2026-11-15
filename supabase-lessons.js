@@ -95,10 +95,11 @@
   }
   window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, refreshPackageList, friendlyError });
 
-  async function createStudentPackage({ studentName, unitPrice, isPaid, paymentMethod, purchaseDate }) {
+  async function createStudentPackage({ studentName, unitPrice, lessonCount, isPaid, paymentMethod, purchaseDate }) {
     const { data, error } = await client.rpc("create_student_package", {
       student_name: studentName,
       unit_price: Number(unitPrice),
+      lesson_count: Number(lessonCount),
       is_paid: Boolean(isPaid),
       payment_method: isPaid ? paymentMethod : null,
       purchase_date: purchaseDate
@@ -146,6 +147,7 @@
           const result = await createStudentPackage({
             studentName: $("student").value.trim(),
             unitPrice: $("unitPrice").value,
+            lessonCount: $("packageLessonCount").value,
             isPaid: $("packagePaid").value === "paid",
             paymentMethod: $("packagePaymentMethod")?.value || null,
             purchaseDate: $("packageDate").value
@@ -166,7 +168,7 @@
         } catch (error) {
           console.error("[KWMT] Falha ao cadastrar aluno/pacote:", error.cause || error);
           toast(friendlyError(error));
-        } finally { if (button) { button.disabled = false; button.textContent = "Criar pacote de 10 aulas"; } }
+        } finally { if (button) { button.disabled = false; button.textContent = "Criar pacote"; } }
       }, true);
     }
     try {
