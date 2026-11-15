@@ -106,8 +106,8 @@ revoke all on function public.record_lesson_financials() from public, anon, auth
 
 create or replace function public.create_school_teacher(
   teacher_name text,
-  payout_type text,
-  payout_value numeric
+  p_payout_type text,
+  p_payout_value numeric
 )
 returns jsonb
 language plpgsql
@@ -121,8 +121,8 @@ declare
 begin
   if v_user_id is null then raise exception 'Authentication required'; end if;
   if nullif(trim(teacher_name), '') is null then raise exception 'Teacher name is required'; end if;
-  if payout_type not in ('fixed_amount','percentage') then raise exception 'Invalid payout type'; end if;
-  if payout_value is null or payout_value < 0 or (payout_type = 'percentage' and payout_value > 100) then
+  if p_payout_type not in ('fixed_amount','percentage') then raise exception 'Invalid payout type'; end if;
+  if p_payout_value is null or p_payout_value < 0 or (p_payout_type = 'percentage' and p_payout_value > 100) then
     raise exception 'Invalid payout value';
   end if;
   select m.school_id into v_school_id from public.school_members m
@@ -135,7 +135,7 @@ begin
   insert into public.teachers(school_id, name, active)
     values (v_school_id, trim(teacher_name), true) returning id into v_teacher_id;
   insert into public.teacher_payout_rules(school_id, teacher_id, lesson_type_id, payout_type, payout_value)
-    values (v_school_id, v_teacher_id, null, payout_type, payout_value);
+    values (v_school_id, v_teacher_id, null, p_payout_type, p_payout_value);
   return jsonb_build_object('teacher_id', v_teacher_id, 'teacher_name', trim(teacher_name));
 end;
 $$;
@@ -143,8 +143,8 @@ $$;
 create or replace function public.save_teacher_payout_rule(
   target_teacher uuid,
   target_lesson_type uuid,
-  payout_type text,
-  payout_value numeric
+  p_payout_type text,
+  p_payout_value numeric
 )
 returns jsonb
 language plpgsql
@@ -157,8 +157,8 @@ declare
   v_rule_id uuid;
 begin
   if v_user_id is null then raise exception 'Authentication required'; end if;
-  if payout_type not in ('fixed_amount','percentage') then raise exception 'Invalid payout type'; end if;
-  if payout_value is null or payout_value < 0 or (payout_type = 'percentage' and payout_value > 100) then
+  if p_payout_type not in ('fixed_amount','percentage') then raise exception 'Invalid payout type'; end if;
+  if p_payout_value is null or p_payout_value < 0 or (p_payout_type = 'percentage' and p_payout_value > 100) then
     raise exception 'Invalid payout value';
   end if;
   select m.school_id into v_school_id from public.school_members m
@@ -181,12 +181,12 @@ begin
     limit 1 for update;
   if v_rule_id is null then
     insert into public.teacher_payout_rules(school_id, teacher_id, lesson_type_id, payout_type, payout_value)
-      values (v_school_id, target_teacher, target_lesson_type, payout_type, payout_value)
+      values (v_school_id, target_teacher, target_lesson_type, p_payout_type, p_payout_value)
       returning id into v_rule_id;
   else
     update public.teacher_payout_rules
-      set payout_type = save_teacher_payout_rule.payout_type,
-          payout_value = save_teacher_payout_rule.payout_value,
+      set payout_type = p_payout_type,
+          payout_value = p_payout_value,
           updated_at = now()
       where id = v_rule_id and school_id = v_school_id;
   end if;
