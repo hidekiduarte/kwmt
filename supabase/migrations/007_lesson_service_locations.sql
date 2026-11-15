@@ -34,6 +34,14 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- Depois da conclusão, o local integra o histórico operacional da aula.
+  if tg_op = 'UPDATE'
+     and old.status = 'completed'
+     and (new.location_id is distinct from old.location_id
+          or new.school_id is distinct from old.school_id) then
+    raise exception 'Completed lesson location cannot be changed';
+  end if;
+
   if tg_op = 'INSERT' and new.location_id is null then
     raise exception 'An active service location is required for new lessons';
   end if;
