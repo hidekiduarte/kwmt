@@ -51,6 +51,46 @@
     if (error) fail(friendlyError(error), error);
     return data || [];
   }
+  async function loadLessonTypes() {
+    const { schoolId } = await requireOwnerSchool();
+    const { data, error } = await client.from("lesson_types").select("id,name,duration_minutes,price").eq("school_id", schoolId).eq("active", true).order("name");
+    if (error) fail(friendlyError(error), error);
+    return data || [];
+  }
+  async function createSchoolTeacher({ name, payoutType, payoutValue }) {
+    const { data, error } = await client.rpc("create_school_teacher", {
+      teacher_name: name, payout_type: payoutType, payout_value: Number(payoutValue)
+    });
+    if (error) fail(friendlyError(error), error);
+    return data;
+  }
+  async function saveTeacherPayoutRule({ teacherId, lessonTypeId, payoutType, payoutValue }) {
+    const { data, error } = await client.rpc("save_teacher_payout_rule", {
+      target_teacher: teacherId, target_lesson_type: lessonTypeId || null,
+      payout_type: payoutType, payout_value: Number(payoutValue)
+    });
+    if (error) fail(friendlyError(error), error);
+    return data;
+  }
+  async function refreshTeacherTeam() {
+    const [{ schoolId }, teachers, rules, lessonTypes] = await Promise.all([
+      requireOwnerSchool(), loadTeachers(),
+      (async () => { const { schoolId } = await requireOwnerSchool(); const r = await client.from("teacher_payout_rules").select("teacher_id,lesson_type_id,payout_type,payout_value").eq("school_id", schoolId); if (r.error) fail(friendlyError(r.error), r.error); return r.data || []; })(),
+      loadLessonTypes()
+    ]);
+    const team = $("team");
+    if (team) team.innerHTML = teachers.length ? teachers.map(t => {
+      const own = rules.filter(r => r.teacher_id === t.id);
+      const general = own.find(r => !r.lesson_type_id);
+      const specific = own.filter(r => r.lesson_type_id);
+      const payoutLabel = r => r.payout_type === "percentage" ? Number(r.payout_value) + "%" : money(r.payout_value);
+      return '<div class="item"><strong>' + t.name + '</strong><div class="sub">Regra geral: ' + (general ? payoutLabel(general) : "não configurada") + ' · ' + specific.length + ' regra(s) específica(s)</div></div>';
+    }).join("") : '<div class="empty">Nenhum professor cadastrado.</div>';
+    const teacherSelect = $("teacherRuleTeacher"), typeSelect = $("teacherRuleLessonType");
+    if (teacherSelect) { teacherSelect.replaceChildren(makeOption("", "Selecione o professor")); teachers.forEach(t => teacherSelect.append(makeOption(t.id,t.name))); }
+    if (typeSelect) { typeSelect.replaceChildren(makeOption("", "Selecione a modalidade")); lessonTypes.forEach(t => typeSelect.append(makeOption(t.id, t.name + " · " + t.duration_minutes + " min"))); }
+    return { teachers, lessonTypes };
+  }
   async function loadPackages(studentId) {
     if (!studentId) return [];
     const { schoolId } = await requireOwnerSchool();
@@ -93,7 +133,7 @@
     if (error) fail(friendlyError(error), error);
     return true;
   }
-  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, refreshPackageList, friendlyError });
+  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, createSchoolTeacher, saveTeacherPayoutRule, refreshPackageList, refreshTeacherTeam, friendlyError });
 
   async function createStudentPackage({ studentName, unitPrice, lessonCount, isPaid, paymentMethod, purchaseDate }) {
     const { data, error } = await client.rpc("create_student_package", {
@@ -133,6 +173,33 @@
       rows.forEach(row => select.append(makeOption(row.id, label(row))));
     };
 
+    const teacherForm = $("teacherForm");
+    if (teacherForm) teacherForm.addEventListener("submit", async event => {
+      event.preventDefault(); event.stopImmediatePropagation();
+      const button = teacherForm.querySelector("button[type=submit]");
+      if (button) { button.disabled = true; button.textContent = "Salvando..."; }
+      try {
+        await createSchoolTeacher({ name: $("newTeacherName").value.trim(), payoutType: $("teacherPayoutType").value, payoutValue: $("teacherPayoutValue").value });
+        teacherForm.reset();
+        await refreshTeacherTeam();
+        const teachers = await loadTeachers();
+        setOptions(teacher, teachers.length ? "Selecione o professor" : "Cadastre professores no banco", teachers, x => x.name);
+        toast("Professor e regra geral cadastrados no banco.");
+      } catch (error) { console.error("[KWMT] Falha ao cadastrar professor:", error.cause || error); toast(friendlyError(error)); }
+      finally { if (button) { button.disabled = false; button.textContent = "＋ Adicionar professor"; } }
+    }, true);
+    const teacherRuleForm = $("teacherRuleForm");
+    if (teacherRuleForm) teacherRuleForm.addEventListener("submit", async event => {
+      event.preventDefault(); event.stopImmediatePropagation();
+      const button = teacherRuleForm.querySelector("button[type=submit]");
+      if (button) { button.disabled = true; button.textContent = "Salvando..."; }
+      try {
+        await saveTeacherPayoutRule({ teacherId: $("teacherRuleTeacher").value, lessonTypeId: $("teacherRuleLessonType").value, payoutType: $("teacherRulePayoutType").value, payoutValue: $("teacherRulePayoutValue").value });
+        teacherRuleForm.reset(); await refreshTeacherTeam();
+        toast("Regra específica de repasse salva.");
+      } catch (error) { console.error("[KWMT] Falha ao salvar regra:", error.cause || error); toast(friendlyError(error)); }
+      finally { if (button) { button.disabled = false; button.textContent = "Salvar regra específica"; } }
+    }, true);
     const packageForm = $("packageForm");
     if (packageForm) {
       const paidSelect = $("packagePaid"), methodSelect = $("packagePaymentMethod");
@@ -157,6 +224,7 @@
           $("packageDate").value = new Date().toLocaleDateString("en-CA");
           syncPaymentMethod();
           await refreshPackageList();
+      await refreshTeacherTeam();
           const students = await loadStudents();
           const studentSelect = $("schoolStudent");
           if (studentSelect) {
