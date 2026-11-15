@@ -224,7 +224,6 @@
           $("packageDate").value = new Date().toLocaleDateString("en-CA");
           syncPaymentMethod();
           await refreshPackageList();
-      await refreshTeacherTeam();
           const students = await loadStudents();
           const studentSelect = $("schoolStudent");
           if (studentSelect) {
@@ -245,6 +244,7 @@
       setOptions(teacher, teachers.length ? "Selecione o professor" : "Cadastre professores no banco", teachers, x => x.name);
       setOptions(pack, "Selecione primeiro o aluno", [], () => "");
       await refreshPackageList();
+      await refreshTeacherTeam();
     } catch (error) {
       console.error("[KWMT] Falha ao carregar dados do agendamento:", error);
       toast(friendlyError(error));
