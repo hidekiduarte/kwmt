@@ -5,6 +5,7 @@
 create or replace function public.create_student_package(
   student_name text,
   unit_price numeric,
+  lesson_count integer,
   is_paid boolean default false,
   payment_method text default null,
   purchase_date date default current_date
@@ -33,6 +34,9 @@ begin
   if unit_price is null or unit_price <= 0 then
     raise exception 'Unit price must be greater than zero';
   end if;
+  if lesson_count is null or lesson_count <= 0 then
+    raise exception 'Lesson count must be a positive integer';
+  end if;
   if purchase_date is null then
     raise exception 'Purchase date is required';
   end if;
@@ -58,7 +62,7 @@ begin
     raise exception 'Multiple owner schools are not supported by this operation';
   end if;
 
-  v_total := round(unit_price * 10, 2);
+  v_total := round(unit_price * lesson_count, 2);
   v_purchased_at := purchase_date::timestamp at time zone 'America/Sao_Paulo';
 
   insert into public.students (school_id, name)
@@ -66,14 +70,14 @@ begin
   returning id into v_student_id;
 
   insert into public.package_offers (school_id, name, lesson_count, price, validity_days, active)
-  values (v_school_id, 'Pacote de 10 aulas', 10, v_total, null, true)
+  values (v_school_id, 'Pacote de ' || lesson_count::text || ' aulas', lesson_count, v_total, null, true)
   returning id into v_offer_id;
 
   insert into public.student_packages (
     school_id, student_id, package_offer_id, lessons_purchased,
     contracted_amount, purchased_at, expires_at, status
   ) values (
-    v_school_id, v_student_id, v_offer_id, 10,
+    v_school_id, v_student_id, v_offer_id, lesson_count,
     v_total, v_purchased_at, null, 'active'
   ) returning id into v_package_id;
 
@@ -90,7 +94,7 @@ begin
     'student_name', trim(student_name),
     'student_package_id', v_package_id,
     'package_offer_id', v_offer_id,
-    'lessons_purchased', 10,
+    'lessons_purchased', lesson_count,
     'contracted_amount', v_total,
     'is_paid', is_paid,
     'purchased_at', v_purchased_at
@@ -98,5 +102,5 @@ begin
 end;
 $$;
 
-revoke all on function public.create_student_package(text, numeric, boolean, text, date) from public, anon;
+revoke all on function public.create_student_package(text, numeric, integer, boolean, text, date) from public, anon;
 grant execute on function public.create_student_package(text, numeric, boolean, text, date) to authenticated;
