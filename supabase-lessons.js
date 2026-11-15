@@ -92,7 +92,35 @@
     if (error) fail(friendlyError(error), error);
     return true;
   }
-  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadPackages, schedulePackageLesson, confirmAttendance, friendlyError });
+  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, refreshPackageList, friendlyError });
+
+  async function createStudentPackage({ studentName, unitPrice, isPaid, paymentMethod, purchaseDate }) {
+    const { data, error } = await client.rpc("create_student_package", {
+      student_name: studentName,
+      unit_price: Number(unitPrice),
+      is_paid: Boolean(isPaid),
+      payment_method: isPaid ? paymentMethod : null,
+      purchase_date: purchaseDate
+    });
+    if (error) fail(friendlyError(error), error);
+    return data;
+  }
+  async function refreshPackageList() {
+    const { schoolId } = await requireOwnerSchool();
+    const { data, error } = await client.from("student_packages")
+      .select("id,lessons_purchased,lessons_used,contracted_amount,purchased_at,status,students(name),package_offers(name)")
+      .eq("school_id", schoolId).order("purchased_at", { ascending: false });
+    if (error) fail(friendlyError(error), error);
+    const target = $("packageList");
+    if (!target) return;
+    target.innerHTML = (data || []).length ? data.map(p => {
+      const remaining = Number(p.lessons_purchased) - Number(p.lessons_used || 0);
+      const studentName = p.students?.name || "Aluno";
+      const date = p.purchased_at ? new Date(p.purchased_at).toLocaleDateString("pt-BR") : "";
+      return `<div class="item"><strong>${studentName} <span class="pill ${remaining <= 1 ? "bad" : remaining <= 5 ? "warn" : "good"}">${remaining} restantes</span></strong><div class="sub">${p.package_offers?.name || "Pacote"} · ${money(p.contracted_amount)} · ${date}<br>${Number(p.lessons_used || 0)}/${p.lessons_purchased} utilizadas · ${p.status === "active" ? "Ativo" : p.status}</div></div>`;
+    }).join("") : '<div class="empty">Nenhum pacote cadastrado no banco.</div>';
+  }
+
   const $ = id => document.getElementById(id);
   const makeOption = (value, label) => { const o = document.createElement("option"); o.value = value; o.textContent = label; return o; };
   async function connectForm() {
@@ -102,11 +130,50 @@
       select.replaceChildren(makeOption("", placeholder));
       rows.forEach(row => select.append(makeOption(row.id, label(row))));
     };
+
+    const packageForm = $("packageForm");
+    if (packageForm) {
+      const paidSelect = $("packagePaid"), methodSelect = $("packagePaymentMethod");
+      const syncPaymentMethod = () => { if (methodSelect) methodSelect.disabled = paidSelect.value !== "paid"; };
+      if (paidSelect) { paidSelect.addEventListener("change", syncPaymentMethod); syncPaymentMethod(); }
+      packageForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const button = packageForm.querySelector('button[type="submit"],button:not([type])');
+        if (button) { button.disabled = true; button.textContent = "Salvando no banco..."; }
+        try {
+          const result = await createStudentPackage({
+            studentName: $("student").value.trim(),
+            unitPrice: $("unitPrice").value,
+            isPaid: $("packagePaid").value === "paid",
+            paymentMethod: $("packagePaymentMethod")?.value || null,
+            purchaseDate: $("packageDate").value
+          });
+          toast("Aluno e pacote cadastrados no Supabase. Código: " + result.student_package_id.slice(0, 8));
+          packageForm.reset();
+          $("packageDate").value = new Date().toLocaleDateString("en-CA");
+          syncPaymentMethod();
+          await refreshPackageList();
+          const students = await loadStudents();
+          const studentSelect = $("schoolStudent");
+          if (studentSelect) {
+            studentSelect.replaceChildren(makeOption("", "Selecione o aluno"));
+            students.forEach(s => studentSelect.append(makeOption(s.id, s.name)));
+            studentSelect.value = result.student_id;
+            studentSelect.dispatchEvent(new Event("change"));
+          }
+        } catch (error) {
+          console.error("[KWMT] Falha ao cadastrar aluno/pacote:", error.cause || error);
+          toast(friendlyError(error));
+        } finally { if (button) { button.disabled = false; button.textContent = "Criar pacote de 10 aulas"; } }
+      }, true);
+    }
     try {
       const [students, teachers] = await Promise.all([loadStudents(), loadTeachers()]);
       setOptions(student, students.length ? "Selecione o aluno" : "Cadastre alunos no banco", students, x => x.name);
       setOptions(teacher, teachers.length ? "Selecione o professor" : "Cadastre professores no banco", teachers, x => x.name);
       setOptions(pack, "Selecione primeiro o aluno", [], () => "");
+      await refreshPackageList();
     } catch (error) {
       console.error("[KWMT] Falha ao carregar dados do agendamento:", error);
       toast(friendlyError(error));
