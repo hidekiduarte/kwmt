@@ -66,6 +66,17 @@
     if (error) fail(friendlyError(error), error);
     return data || [];
   }
+  async function createSchoolLocation({ name, city, state }) {
+    const { schoolId } = await requireOwnerSchool();
+    const locations = await loadLocations();
+    const { data, error } = await client.from("school_locations").insert({
+      school_id: schoolId, location_name: name.trim(), city: city.trim(),
+      state: state.trim().toUpperCase(), is_primary: locations.length === 0,
+      active: true
+    }).select("id,location_name,city,state,is_primary").single();
+    if (error) fail(friendlyError(error), error);
+    return data;
+  }
   async function createSchoolTeacher({ name, payoutType, payoutValue }) {
     const { data, error } = await client.rpc("create_school_teacher", {
       teacher_name: name, p_payout_type: payoutType, p_payout_value: Number(payoutValue)
@@ -143,7 +154,7 @@
     if (error) fail(friendlyError(error), error);
     return true;
   }
-  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadLocations, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, createSchoolTeacher, saveTeacherPayoutRule, refreshPackageList, refreshTeacherTeam, friendlyError });
+  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadLocations, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, createSchoolTeacher, createSchoolLocation, saveTeacherPayoutRule, refreshPackageList, refreshTeacherTeam, friendlyError });
 
   async function createStudentPackage({ studentName, unitPrice, lessonCount, isPaid, paymentMethod, purchaseDate }) {
     const { data, error } = await client.rpc("create_student_package", {
@@ -183,6 +194,21 @@
       rows.forEach(row => select.append(makeOption(row.id, label(row))));
     };
 
+    const locationForm = $("locationForm");
+    if (locationForm) locationForm.addEventListener("submit", async event => {
+      event.preventDefault(); event.stopImmediatePropagation();
+      const button = locationForm.querySelector("button[type=submit]");
+      if (button) { button.disabled = true; button.textContent = "Salvando..."; }
+      try {
+        await createSchoolLocation({ name: $("newLocationName").value, city: $("newLocationCity").value, state: $("newLocationState").value });
+        locationForm.reset();
+        const locations = await loadLocations();
+        setOptions(location, "Selecione o local de atendimento", locations,
+          x => x.location_name + " · " + x.city + "/" + x.state + (x.is_primary ? " · Principal" : ""));
+        toast("Local de atendimento cadastrado.");
+      } catch (error) { console.error("[KWMT] Falha ao cadastrar local:", error.cause || error); toast(friendlyError(error)); }
+      finally { if (button) { button.disabled = false; button.textContent = "＋ Adicionar local"; } }
+    }, true);
     const teacherForm = $("teacherForm");
     if (teacherForm) teacherForm.addEventListener("submit", async event => {
       event.preventDefault(); event.stopImmediatePropagation();
