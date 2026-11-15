@@ -57,6 +57,15 @@
     if (error) fail(friendlyError(error), error);
     return data || [];
   }
+  async function loadLocations() {
+    const { schoolId } = await requireOwnerSchool();
+    const { data, error } = await client.from("school_locations")
+      .select("id,location_name,city,state,is_primary")
+      .eq("school_id", schoolId).eq("active", true)
+      .order("is_primary", { ascending: false }).order("location_name");
+    if (error) fail(friendlyError(error), error);
+    return data || [];
+  }
   async function createSchoolTeacher({ name, payoutType, payoutValue }) {
     const { data, error } = await client.rpc("create_school_teacher", {
       teacher_name: name, p_payout_type: payoutType, p_payout_value: Number(payoutValue)
@@ -108,8 +117,8 @@
     if (Number.isNaN(value.getTime())) fail("Data ou horário inválido.");
     return value.toISOString();
   }
-  async function schedulePackageLesson({ studentId, teacherId, packageId, date, time }) {
-    if (!studentId || !teacherId || !packageId) fail("Selecione aluno, professor e pacote.");
+  async function schedulePackageLesson({ studentId, teacherId, packageId, locationId, date, time }) {
+    if (!studentId || !teacherId || !packageId || !locationId) fail("Selecione aluno, professor, pacote e local de atendimento.");
     const { schoolId } = await requireOwnerSchool();
     const startsAt = localDateTimeToIso(date, time);
     const endsAt = new Date(new Date(startsAt).getTime() + 60 * 60000).toISOString();
@@ -122,8 +131,9 @@
     if (Number(pkg.lessons_used || 0) >= Number(pkg.lessons_purchased)) fail("Este pacote não tem aulas disponíveis.");
     const { data, error } = await client.from("lessons").insert({
       school_id: schoolId, student_id: studentId, teacher_id: teacherId,
-      student_package_id: packageId, starts_at: startsAt, ends_at: endsAt, status: "scheduled"
-    }).select("id,student_id,teacher_id,student_package_id,starts_at,ends_at,status").single();
+      student_package_id: packageId, location_id: locationId,
+      starts_at: startsAt, ends_at: endsAt, status: "scheduled"
+    }).select("id,student_id,teacher_id,student_package_id,location_id,starts_at,ends_at,status").single();
     if (error) fail(friendlyError(error), error);
     return data;
   }
@@ -133,7 +143,7 @@
     if (error) fail(friendlyError(error), error);
     return true;
   }
-  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, createSchoolTeacher, saveTeacherPayoutRule, refreshPackageList, refreshTeacherTeam, friendlyError });
+  window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadLocations, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, createSchoolTeacher, saveTeacherPayoutRule, refreshPackageList, refreshTeacherTeam, friendlyError });
 
   async function createStudentPackage({ studentName, unitPrice, lessonCount, isPaid, paymentMethod, purchaseDate }) {
     const { data, error } = await client.rpc("create_student_package", {
@@ -166,8 +176,8 @@
   const $ = id => document.getElementById(id);
   const makeOption = (value, label) => { const o = document.createElement("option"); o.value = value; o.textContent = label; return o; };
   async function connectForm() {
-    const form = $("schoolLessonForm"), student = $("schoolStudent"), pack = $("schoolPackage"), teacher = $("teacher");
-    if (!form || !student || !pack || !teacher) return;
+    const form = $("schoolLessonForm"), student = $("schoolStudent"), pack = $("schoolPackage"), teacher = $("teacher"), location = $("schoolLocation");
+    if (!form || !student || !pack || !teacher || !location) return;
     const setOptions = (select, placeholder, rows, label) => {
       select.replaceChildren(makeOption("", placeholder));
       rows.forEach(row => select.append(makeOption(row.id, label(row))));
@@ -239,9 +249,11 @@
       }, true);
     }
     try {
-      const [students, teachers] = await Promise.all([loadStudents(), loadTeachers()]);
+      const [students, teachers, locations] = await Promise.all([loadStudents(), loadTeachers(), loadLocations()]);
       setOptions(student, students.length ? "Selecione o aluno" : "Cadastre alunos no banco", students, x => x.name);
       setOptions(teacher, teachers.length ? "Selecione o professor" : "Cadastre professores no banco", teachers, x => x.name);
+      setOptions(location, locations.length ? "Selecione o local de atendimento" : "Cadastre um local de atendimento", locations,
+        x => x.location_name + " · " + x.city + "/" + x.state + (x.is_primary ? " · Principal" : ""));
       setOptions(pack, "Selecione primeiro o aluno", [], () => "");
       await refreshPackageList();
       await refreshTeacherTeam();
@@ -270,7 +282,8 @@
       if (button) { button.disabled = true; button.textContent = "Agendando..."; }
       try {
         const lesson = await schedulePackageLesson({ studentId: student.value, teacherId: teacher.value,
-          packageId: pack.value, date: $("schoolDate").value, time: $("schoolTime").value });
+          packageId: pack.value, locationId: location.value,
+          date: $("schoolDate").value, time: $("schoolTime").value });
         toast("Aula agendada no Supabase staging. Código: " + lesson.id.slice(0, 8));
         form.reset();
         $("schoolDate").value = new Date().toLocaleDateString("en-CA");
