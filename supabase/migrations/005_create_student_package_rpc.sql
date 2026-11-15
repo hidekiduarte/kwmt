@@ -103,4 +103,4 @@ end;
 $$;
 
 revoke all on function public.create_student_package(text, numeric, integer, boolean, text, date) from public, anon;
-grant execute on function public.create_student_package(text, numeric, boolean, text, date) to authenticated;
+grant execute on function public.create_student_package(text, numeric, integer, boolean, text, date) to authenticated;
