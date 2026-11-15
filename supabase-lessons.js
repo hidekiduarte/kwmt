@@ -5,6 +5,7 @@
 (() => {
   "use strict";
   const cfg = window.KWMT_SUPABASE_CONFIG || {};
+  const money = value => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value) || 0);
   const toast = message => {
     const el = document.getElementById("toast");
     if (el) { el.textContent = message; el.style.display = "block"; }
