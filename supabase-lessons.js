@@ -59,7 +59,7 @@
   }
   async function createSchoolTeacher({ name, payoutType, payoutValue }) {
     const { data, error } = await client.rpc("create_school_teacher", {
-      teacher_name: name, payout_type: payoutType, payout_value: Number(payoutValue)
+      teacher_name: name, p_payout_type: payoutType, p_payout_value: Number(payoutValue)
     });
     if (error) fail(friendlyError(error), error);
     return data;
@@ -67,7 +67,7 @@
   async function saveTeacherPayoutRule({ teacherId, lessonTypeId, payoutType, payoutValue }) {
     const { data, error } = await client.rpc("save_teacher_payout_rule", {
       target_teacher: teacherId, target_lesson_type: lessonTypeId || null,
-      payout_type: payoutType, payout_value: Number(payoutValue)
+      p_payout_type: payoutType, p_payout_value: Number(payoutValue)
     });
     if (error) fail(friendlyError(error), error);
     return data;
