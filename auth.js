@@ -26,6 +26,9 @@
     if (/email not confirmed/i.test(msg)) {
       return "Seu e-mail ainda não foi confirmado. Abra a mensagem enviada pelo Supabase e confirme o cadastro antes de entrar.";
     }
+    if (/failed to fetch|load failed|networkerror|network request failed/i.test(msg) || error instanceof TypeError) {
+      return "O navegador não conseguiu alcançar o Supabase. Verifique a conexão e se o domínio kwmt.vercel.app está autorizado nas configurações de URL do Supabase. Nenhuma conta foi confirmada por esta mensagem.";
+    }
     return msg || "Não foi possível concluir. Confira os dados e tente novamente.";
   };
 
@@ -93,7 +96,7 @@
         if (!fullName || !schoolName) throw new Error("Preencha seu nome e o nome da escola para continuar.");
         if (password.length < 8) throw new Error("Use uma senha com pelo menos 8 caracteres.");
         const { data, error } = await client.auth.signUp({
-          email, password, options: { data: { full_name: fullName }, emailRedirectTo: "https://hidekiduarte.github.io/kwmt/login.html" }
+          email, password, options: { data: { full_name: fullName }, emailRedirectTo: "https://kwmt.vercel.app/login.html" }
         });
         if (error) throw error;
         if (data.session) {
@@ -154,7 +157,7 @@
         const { error } = await client.auth.resend({
           type: "signup",
           email,
-          options: { emailRedirectTo: "https://hidekiduarte.github.io/kwmt/login.html" }
+          options: { emailRedirectTo: "https://kwmt.vercel.app/login.html" }
         });
         if (error) throw error;
         status("Enviamos um novo link. Abra a mensagem mais recente do Supabase no seu e-mail.");
