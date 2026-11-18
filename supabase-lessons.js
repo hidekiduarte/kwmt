@@ -157,6 +157,75 @@
     if (error) fail(friendlyError(error), error);
     return true;
   }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[char]);
+  }
+  async function loadSchoolHistory() {
+    const { schoolId } = await requireOwnerSchool();
+    const { data, error } = await client.from("lessons")
+      .select("id,starts_at,ends_at,status,students(name),teachers(name),lesson_types(name),school_locations(location_name,city,state)")
+      .eq("school_id", schoolId)
+      .order("starts_at", { ascending: false });
+    if (error) fail(friendlyError(error), error);
+    return data || [];
+  }
+  function renderSchoolHistory(rows) {
+    const target = $("schoolHistory");
+    if (!target) return;
+    if (!rows.length) {
+      target.className = "empty";
+      target.textContent = "Nenhuma aula registrada no banco.";
+      return;
+    }
+    target.className = "";
+    const now = Date.now();
+    target.innerHTML = rows.map(lesson => {
+      const start = new Date(lesson.starts_at);
+      const end = new Date(lesson.ends_at);
+      const dateLabel = Number.isNaN(start.getTime()) ? "Data não informada" : start.toLocaleString("pt-BR", {
+        dateStyle: "short", timeStyle: "short"
+      });
+      const endLabel = Number.isNaN(end.getTime()) ? "" : end.toLocaleTimeString("pt-BR", {
+        hour: "2-digit", minute: "2-digit"
+      });
+      const location = lesson.school_locations
+        ? [lesson.school_locations.location_name, lesson.school_locations.city, lesson.school_locations.state].filter(Boolean).join(" · ")
+        : "Local não informado";
+      const statusLabels = { scheduled: "Agendada", completed: "Realizada", cancelled: "Cancelada" };
+      const status = statusLabels[lesson.status] || lesson.status || "Não informada";
+      const canConfirm = lesson.status === "scheduled" && !Number.isNaN(end.getTime()) && end.getTime() <= now;
+      const action = canConfirm
+        ? '<button type="button" class="secondary" data-confirm-lesson="' + escapeHtml(lesson.id) + '">Confirmar presença</button>'
+        : "";
+      return '<article class="item"><strong>' + escapeHtml(lesson.students?.name || "Aluno não identificado") +
+        ' <span class="pill ' + (lesson.status === "completed" ? "good" : lesson.status === "cancelled" ? "bad" : "warn") + '">' + escapeHtml(status) +
+        '</span></strong><div class="sub">' +
+        escapeHtml(dateLabel + (endLabel ? " · término " + endLabel : "")) + '<br>' +
+        'Professor: ' + escapeHtml(lesson.teachers?.name || "Não informado") + '<br>' +
+        'Modalidade: ' + escapeHtml(lesson.lesson_types?.name || "Modalidade não informada") + '<br>' +
+        'Local: ' + escapeHtml(location) + '</div>' + action + '</article>';
+    }).join("");
+  }
+  async function refreshSchoolHistory() {
+    const target = $("schoolHistory");
+    if (target) {
+      target.className = "empty";
+      target.textContent = "Carregando histórico do banco...";
+    }
+    try {
+      const rows = await loadSchoolHistory();
+      renderSchoolHistory(rows);
+    } catch (error) {
+      if (target) {
+        target.className = "empty";
+        target.textContent = "Não foi possível carregar o histórico: " + friendlyError(error);
+      }
+      console.error("[KWMT] Falha ao carregar histórico:", error.cause || error);
+    }
+  }
   window.KWMTLessons = Object.freeze({ loadStudents, loadTeachers, loadLocations, loadPackages, schedulePackageLesson, confirmAttendance, createStudentPackage, createSchoolTeacher, createSchoolLocation, saveTeacherPayoutRule, refreshPackageList, refreshTeacherTeam, friendlyError });
 
   async function createStudentPackage({ studentName, unitPrice, lessonCount, isPaid, paymentMethod, purchaseDate }) {
@@ -196,6 +265,31 @@
       select.replaceChildren(makeOption("", placeholder));
       rows.forEach(row => select.append(makeOption(row.id, label(row))));
     };
+
+    const historyTarget = $("schoolHistory");
+    if (historyTarget) {
+      historyTarget.className = "empty";
+      historyTarget.textContent = "Carregando histórico do banco...";
+      historyTarget.addEventListener("click", async event => {
+        const button = event.target.closest("[data-confirm-lesson]");
+        if (!button || button.disabled) return;
+        const lessonId = button.getAttribute("data-confirm-lesson");
+        button.disabled = true;
+        button.textContent = "Confirmando...";
+        try {
+          await confirmAttendance(lessonId);
+          toast("Presença confirmada. Aula registrada como realizada.");
+          await refreshSchoolHistory();
+        } catch (error) {
+          console.error("[KWMT] Falha ao confirmar presença:", error.cause || error);
+          toast(friendlyError(error));
+          button.disabled = false;
+          button.textContent = "Confirmar presença";
+        }
+      });
+    }
+    const historyRefresh = $("refreshSchoolHistory");
+    if (historyRefresh) historyRefresh.addEventListener("click", refreshSchoolHistory);
 
     const locationForm = $("locationForm");
     if (locationForm) locationForm.addEventListener("submit", async event => {
@@ -287,6 +381,7 @@
       setOptions(pack, "Selecione primeiro o aluno", [], () => "");
       await refreshPackageList();
       await refreshTeacherTeam();
+      await refreshSchoolHistory();
     } catch (error) {
       console.error("[KWMT] Falha ao carregar dados do agendamento:", error);
       toast(friendlyError(error));
@@ -316,12 +411,13 @@
           date: $("schoolDate").value, time: $("schoolTime").value });
         toast("Aula agendada no Supabase staging. Código: " + lesson.id.slice(0, 8));
         form.reset();
+        await refreshSchoolHistory();
         $("schoolDate").value = new Date().toLocaleDateString("en-CA");
         pack.replaceChildren(makeOption("", "Selecione primeiro o aluno"));
       } catch (error) {
         console.error("[KWMT] Agendamento recusado:", error.cause || error);
         toast(friendlyError(error));
-      } finally { if (button) { button.disabled = false; button.textContent = "Agendar aula de 1 hora"; } }
+      } finally { if (button) { button.disabled = false; button.textContent = "Registrar aula"; } }
     }, true);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", connectForm, { once: true });
